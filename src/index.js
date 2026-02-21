@@ -60,7 +60,9 @@ const config = {
     OPENCLAW_API: process.env.OPENCLAW_API || 'http://localhost:8080',
     WHISPER_SERVER: process.env.WHISPER_SERVER || 'http://127.0.0.1:5001',
     SILENCE_THRESHOLD_MS: 1500,
-    WAKE_WORD: process.env.WAKE_WORD || 'kimori',
+    WAKE_WORD: process.env.WAKE_WORD || 'echo',
+    // Parse comma-separated wake words into array
+    WAKE_WORDS: (process.env.WAKE_WORD || 'echo').split(',').map(w => w.trim().toLowerCase()).filter(Boolean),
     RESPONSE_MODE: process.env.RESPONSE_MODE || 'ai', // 'ai' = respond with AI, 'echo' = just repeat
     ALWAYS_RESPOND: process.env.ALWAYS_RESPOND === 'true',
 };
@@ -639,15 +641,15 @@ async function processVoiceAudio(guildId, audioBuffer, userId) {
             // Check wake word (unless ALWAYS_RESPOND is enabled)
             // Strip punctuation and normalize for better detection
             const normalizedText = finalText.toLowerCase().replace(/^[,\.\s]+|[,\.\s]+$/g, '').replace(/\s+/g, ' ');
-            const wakeLower = config.WAKE_WORD.toLowerCase();
-            const hasWakeWord = normalizedText.includes(wakeLower) ||
-                               normalizedText.includes('echo') ||
-                               normalizedText.includes('hey kimori') ||
-                               normalizedText.includes('okay kimori') ||
-                               normalizedText.includes('hey openclaw') ||
-                               normalizedText.includes('ok kimori') ||
-                               normalizedText.startsWith(wakeLower) ||
-                               normalizedText.startsWith('echo');
+            
+            // Check if any configured wake word is present
+            const hasWakeWord = config.WAKE_WORDS.some(wake => 
+                normalizedText.includes(wake) || 
+                normalizedText.includes('hey ' + wake) ||
+                normalizedText.includes('okay ' + wake) ||
+                normalizedText.includes('ok ' + wake) ||
+                normalizedText.startsWith(wake)
+            );
 
             if (!config.ALWAYS_RESPOND && !hasWakeWord) {
                 console.log(`📝 No wake word detected ("${finalText}"), skipping AI response`);
@@ -655,14 +657,15 @@ async function processVoiceAudio(guildId, audioBuffer, userId) {
                 return;
             }
 
-            // Remove wake word from text for cleaner prompt
-            const cleanText = normalizedText
-                .replace(new RegExp(config.WAKE_WORD.toLowerCase(), 'g'), '')
-                .replace(/hey\s*kimori/gi, '')
-                .replace(/okay\s*kimori/gi, '')
-                .replace(/hey\s*openclaw/gi, '')
-                .replace(/^\s*[,.]+\s*/, '')
-                .trim() || finalText;
+            // Remove all configured wake words from text for cleaner prompt
+            let cleanText = normalizedText;
+            config.WAKE_WORDS.forEach(wake => {
+                cleanText = cleanText.replace(new RegExp(wake, 'g'), '');
+                cleanText = cleanText.replace(new RegExp('hey\\s*' + wake, 'gi'), '');
+                cleanText = cleanText.replace(new RegExp('okay\\s*' + wake, 'gi'), '');
+                cleanText = cleanText.replace(new RegExp('ok\\s*' + wake, 'gi'), '');
+            });
+            cleanText = cleanText.replace(/^\s*[,.]+\s*/, '').trim() || finalText;
 
             state.processing = true;
             state.buffer = '';
