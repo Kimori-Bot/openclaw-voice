@@ -5,9 +5,9 @@
 require('dotenv').config();
 
 const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { 
-    joinVoiceChannel, 
-    createAudioPlayer, 
+const {
+    joinVoiceChannel,
+    createAudioPlayer,
     createAudioResource,
     entersState,
     VoiceConnectionStatus,
@@ -34,17 +34,17 @@ function formatLog(level, ...args) {
     const timestamp = new Date().toISOString();
     const message = args.join(' ');
     const logEntry = JSON.stringify({ timestamp, level, message }) + '\n';
-    
+
     // Console output (human readable)
     if (level === 'ERROR') {
         originalError(`[${timestamp}] ERROR:`, ...args);
     } else {
         originalLog(`[${timestamp}]`, ...args);
     }
-    
+
     // File output (JSON)
     fs.appendFileSync(LOG_FILE, logEntry);
-    
+
     return logEntry;
 }
 
@@ -74,12 +74,12 @@ async function convertOpusToWav(opusBuffer) {
     return new Promise((resolve, reject) => {
         const inputFile = `/tmp/opus_input_${Date.now()}.ogg`;
         const outputFile = `/tmp/opus_output_${Date.now()}.wav`;
-        
+
         console.log(`📝 Converting ${opusBuffer.length} bytes of Opus to WAV`);
-        
+
         // Write raw opus packets to temp file as Ogg container
         fs.writeFileSync(inputFile, opusBuffer);
-        
+
         // Use ogg format for Opus in Ogg container
         const ffmpeg = spawn('ffmpeg', [
             '-hide_banner',
@@ -91,20 +91,20 @@ async function convertOpusToWav(opusBuffer) {
             '-y',                  // overwrite output
             outputFile              // output file
         ]);
-        
+
         let stderr = '';
         ffmpeg.stderr.on('data', (d) => { stderr += d.toString(); });
-        
+
         ffmpeg.on('close', (code) => {
             try { fs.unlinkSync(inputFile); } catch(e) {}
-            
+
             console.log(`📝 ffmpeg exited with code ${code}`);
             if (code !== 0) {
                 console.log(`📝 ffmpeg stderr: ${stderr.slice(-500)}`);
                 reject(new Error(`ffmpeg exited with code ${code}`));
                 return;
             }
-            
+
             try {
                 const wavData = fs.readFileSync(outputFile);
                 fs.unlinkSync(outputFile);
@@ -114,7 +114,7 @@ async function convertOpusToWav(opusBuffer) {
                 reject(e);
             }
         });
-        
+
         ffmpeg.on('error', (err) => {
             console.error(`📝 ffmpeg error: ${err.message}`);
             try { fs.unlinkSync(inputFile); } catch(e) {}
@@ -244,7 +244,7 @@ async function getAudioStream(url) {
         console.log(`🌊 Direct stream URL (not YouTube): ${url}`);
         return url;
     }
-    
+
     // It's YouTube - use yt-dlp to get the stream URL
     return new Promise((resolve, reject) => {
         const proc = spawn('yt-dlp', [
@@ -255,10 +255,10 @@ async function getAudioStream(url) {
         ]);
         let output = '';
         let errorOutput = '';
-        
+
         proc.stdout.on('data', (d) => { output += d.toString(); });
         proc.stderr.on('data', (d) => { errorOutput += d.toString(); });
-        
+
         proc.on('close', (code) => {
             const streamUrl = output.trim();
             if (streamUrl && !streamUrl.includes('ERROR')) {
@@ -276,10 +276,10 @@ async function getAudioStream(url) {
 async function playNext(guildId, message = null) {
     const vc = voiceConnections.get(guildId);
     if (!vc?.player) return;
-    
+
     const next = getNextFromQueue(guildId);
     if (!next) return;
-    
+
     try {
         // Get stream URL using yt-dlp
         const streamUrl = await getAudioStream(next.url);
@@ -287,10 +287,10 @@ async function playNext(guildId, message = null) {
             inputType: 'unknown',
             ffmpegArguments: ['-af', 'volume=0.5']
         });
-        
+
         vc.player.on(AudioPlayerStatus.Idle, () => playNext(guildId, message));
         vc.player.play(resource);
-        
+
         if (message) message.reply(`▶️ Now playing: ${next.title}`);
     } catch (e) {
         console.error('Queue play error:', e.message);
@@ -301,17 +301,17 @@ async function playNext(guildId, message = null) {
 async function playMusic(url, guildId, message = null, isSearch = false) {
     const vc = voiceConnections.get(guildId);
     console.log(`🎵 playMusic called: guildId=${guildId}, url=${url}, vc=${vc ? 'exists' : 'null'}`);
-    
+
     if (!vc?.player) {
         console.log('❌ No voice connection or player');
         message?.reply('❌ Not in voice channel!');
         return;
     }
-    
+
     try {
         let playUrl = url;
         let title = url;
-        
+
         // If not a direct URL, search YouTube
         if (!url.match(/^https?:\/\//)) {
             // Skip "Searching..." message since ensureVoice already sent "Joined!"
@@ -326,17 +326,17 @@ async function playMusic(url, guildId, message = null, isSearch = false) {
             // AI search result
             title = url;
         }
-        
+
         // Check if something is playing
         if (vc.player.state.status === AudioPlayerStatus.Playing) {
             const pos = addToQueue(guildId, playUrl, title, message?.author?.username);
             // Don't reply if already replied (ensureVoice handles it)
             return;
         }
-        
+
         // Play immediately
         console.log(`🎵 Starting playback: ${playUrl}`);
-        
+
         // Get stream URL using yt-dlp
         console.log(`🎵 Starting playback: ${playUrl}`);
         let streamUrl;
@@ -352,16 +352,16 @@ async function playMusic(url, guildId, message = null, isSearch = false) {
             }
             return;
         }
-        
+
         // Create audio resource from stream URL using FFmpeg
         const resource = createAudioResource(streamUrl, {
             inputType: 'unknown',
             ffmpegArguments: ['-af', 'volume=0.5']
         });
-        
+
         vc.player.on(AudioPlayerStatus.Idle, () => playNext(guildId, message));
         vc.player.play(resource);
-        
+
         // Don't reply if already replied (ensureVoice handles responses)
     } catch (e) {
         console.error('Play error:', e.message);
@@ -376,7 +376,7 @@ async function textToSpeech(text) {
     return new Promise((resolve, reject) => {
         const tempFile = `/tmp/openclaw-tts-${Date.now()}.mp3`;
         const gtts = spawn('gtts-cli', [text, '--output', tempFile]);
-        
+
         gtts.on('close', () => {
             try {
                 const data = readFileSync(tempFile);
@@ -391,15 +391,15 @@ async function textToSpeech(text) {
 async function speak(text, guildId) {
     const vc = voiceConnections.get(guildId);
     if (!vc) return;
-    
+
     try {
         const audioBuffer = await textToSpeech(text);
         const tempFile = `/tmp/openclaw-tts-${guildId}-${Date.now()}.mp3`;
         writeFileSync(tempFile, audioBuffer);
-        
+
         const resource = createAudioResource(tempFile);
         vc.player.play(resource);
-        
+
         vc.player.on(AudioPlayerStatus.Idle, () => {
             try { unlinkSync(tempFile); } catch (e) {}
         });
@@ -411,44 +411,22 @@ async function speak(text, guildId) {
 // ===============================
 // OPENCLAW AI
 // ===============================
+// Store conversation history per guild for context
+const conversationHistory = new Map(); // guildId -> [{role, content}]
+
 async function sendToOpenClaw(text, guildId) {
-    return new Promise(async (resolve) => {
-        const url = new URL('/v1/chat/completions', config.OPENCLAW_API);
-        
-        // Get voice channel context
+    // Get or initialize conversation history for this guild
+    if (!conversationHistory.has(guildId)) {
+        // Build initial context
         const guild = client.guilds.cache.get(guildId);
         const voiceState = guild?.voiceStates?.cache;
         const members = voiceState?.filter(vc => vc.channelId)?.map(vc => vc.member?.displayName).filter(Boolean) || [];
         
-        // Get current playing info
-        const queue = queues.get(guildId);
-        const currentTrack = queue?.[0];
-        
-        // Build voice context
-        const voiceContext = {
-            in_voice_channel: true,
-            members_in_channel: members,
-            currently_playing: currentTrack ? `${currentTrack.title} by ${currentTrack.author || 'Unknown'}` : null,
-            queue_length: queue?.length || 0,
-            capabilities: [
-                "play music (say 'play <song name>' to play a song)",
-                "skip song (say 'skip' to skip)",
-                "search for streams (say 'search for <query>' to find radio/YouTube)",
-                "control playback (stop, pause, queue)",
-                "general conversation"
-            ]
-        };
-        
-        const sessionKey = `voice-${guildId}`;
-        
         const systemPrompt = `You are Kimori, a helpful AI assistant in a Discord voice chat.
-
-## Current Context
-${JSON.stringify(voiceContext, null, 2)}
 
 ## Your Capabilities
 - Play music: Use the /play command to search and play YouTube songs
-- Search: Use /search to find live streams, radio stations
+- Search: Use /search to find live streams, radio stations  
 - Queue: Users can add songs to queue
 - Speak: You can respond verbally through TTS
 
@@ -458,35 +436,65 @@ ${JSON.stringify(voiceContext, null, 2)}
 - Don't mention "commands" - just do what they ask naturally
 - Be conversational, not robotic`;
 
-        const postData = JSON.stringify({
-            model: `openclaw:${sessionKey}`,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: text }
-            ],
-            max_tokens: 150
+        conversationHistory.set(guildId, [
+            { role: 'system', content: systemPrompt }
+        ]);
+    }
+    
+    const history = conversationHistory.get(guildId);
+    
+    // Add user message
+    history.push({ role: 'user', content: text });
+    
+    // Keep history manageable (last 10 messages)
+    if (history.length > 12) {
+        history.splice(1, history.length - 12); // Keep system + last 10
+    }
+    
+    // Use openclaw agent CLI for session-based responses
+    return new Promise((resolve) => {
+        const proc = spawn('openclaw', [
+            'agent',
+            '--channel', 'discord',
+            '--to', guildId.toString(),
+            '--message', text,
+            '--timeout', '30'
+        ], {
+            stdio: ['ignore', 'pipe', 'pipe']
         });
         
-        const req = (url.protocol === 'https:' ? https : http).request({
-            hostname: url.hostname, port: url.port, path: url.pathname,
-            method: 'POST', headers: { 
-                'Content-Type': 'application/json', 
-                'Content-Length': Buffer.byteLength(postData),
-                'Authorization': 'Bearer ' + (process.env.OPENCLAW_GATEWAY_PASSWORD || 'fuckthat')
-            }
-        }, (res) => {
-            let data = '';
-            res.on('data', c => data += c);
-            res.on('end', () => {
-                try {
-                    const json = JSON.parse(data);
-                    resolve(json.choices?.[0]?.message?.content || json.message || 'No response');
-                } catch (e) { resolve('Error: ' + e.message); }
-            });
+        let output = '';
+        let error = '';
+        
+        proc.stdout.on('data', (data) => {
+            output += data.toString();
         });
-        req.on('error', () => resolve('Error: Could not connect to OpenClaw'));
-        req.write(postData);
-        req.end();
+        
+        proc.stderr.on('data', (data) => {
+            error += data.toString();
+        });
+        
+        proc.on('close', (code) => {
+            if (code === 0 && output.trim()) {
+                // Add AI response to history
+                history.push({ role: 'assistant', content: output.trim() });
+                resolve(output.trim());
+            } else {
+                console.log('OpenClaw agent error:', error || 'No output');
+                resolve('Error: Could not get response');
+            }
+        });
+        
+        proc.on('error', (e) => {
+            console.log('OpenClaw spawn error:', e.message);
+            resolve('Error: ' + e.message);
+        });
+        
+        // Timeout after 30 seconds
+        setTimeout(() => {
+            proc.kill();
+            resolve('Error: Timeout');
+        }, 30000);
     });
 }
 
@@ -498,7 +506,7 @@ ${JSON.stringify(voiceContext, null, 2)}
 
 async function transcribeAudio(audioPath) {
     console.log(`🎤 Transcribing: ${audioPath}`);
-    
+
     // Use whisper server if available
     try {
         const response = await fetch(config.WHISPER_SERVER + '/transcribe', {
@@ -506,7 +514,7 @@ async function transcribeAudio(audioPath) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: audioPath })
         });
-        
+
         if (response.ok) {
             const result = await response.json();
             console.log(`📝 Transcription: ${result.text}`);
@@ -515,28 +523,28 @@ async function transcribeAudio(audioPath) {
     } catch(e) {
         console.log(`⚠️ Whisper server error: ${e.message}`);
     }
-    
+
     // Fallback: try CLI if available
     const whisperExists = (() => {
         try {
             return require('child_process').execSync('which whisper', { stdio: 'ignore' });
         } catch(e) { return null; }
     })();
-    
+
     if (!whisperExists) {
         console.log('⚠️ Whisper not available - skipping transcription');
         return { text: '' };
     }
-    
+
     // CLI fallback - spawn and run whisper
     return new Promise((resolve) => {
         const proc = spawn('whisper', ['--model', 'base', '--language', 'English', '--output_format', 'json', audioPath]);
         let output = '';
         let errorOutput = '';
-        
+
         proc.stdout.on('data', (d) => { output += d.toString(); });
         proc.stderr.on('data', (d) => { errorOutput += d.toString(); });
-        
+
         proc.on('close', (code) => {
             if (code === 0) {
                 const jsonPath = audioPath.replace('.wav', '.json');
@@ -564,50 +572,50 @@ async function transcribeAudio(audioPath) {
 async function processVoiceAudio(guildId, audioBuffer, userId) {
     const vc = voiceConnections.get(guildId);
     if (!vc?.isListening) return;
-    
+
     if (!audioBuffer || audioBuffer.length < 2000) return;
-    
+
     // Save and convert to WAV
     const tempDir = '/tmp/openclaw-audio';
     if (!existsSync(tempDir)) mkdirSync(tempDir, { recursive: true });
-    
+
     const pcmFile = `${tempDir}/speech-${guildId}-${Date.now()}.pcm`;
     const wavFile = `${tempDir}/speech-${guildId}-${Date.now()}.wav`;
     console.log(`💾 Saving ${audioBuffer.length} bytes to ${pcmFile}`);
     writeFileSync(pcmFile, audioBuffer);
-    
+
     // Convert to WAV
     console.log(`🔄 Converting to WAV...`);
     await new Promise((resolve) => {
         const ff = spawn('ffmpeg', ['-f', 's16le', '-ar', '48000', '-ac', '2', '-i', pcmFile, '-af', 'volume=4', '-y', wavFile]);
-        ff.on('close', () => { 
+        ff.on('close', () => {
             console.log(`✅ Converted to WAV: ${wavFile}`);
-            try { unlinkSync(pcmFile); } catch(e) {} resolve(); 
+            try { unlinkSync(pcmFile); } catch(e) {} resolve();
         });
         ff.on('error', (e) => { console.error(`❌ ffmpeg error: ${e.message}`); resolve(); });
     });
-    
+
     // Transcribe
     const result = await transcribeAudio(wavFile);
     try { unlinkSync(wavFile); } catch(e) {}
-    
+
     if (!result.text) return;
-    
+
     const text = result.text.trim();
     console.log(`📝 Transcribed: "${text}"`);
-    
+
     // Update buffer
     if (!transcriptionState.has(guildId)) {
         transcriptionState.set(guildId, { buffer: '', lastUpdate: Date.now(), processing: false, silenceTimer: null });
     }
     const state = transcriptionState.get(guildId);
-    
+
     state.buffer = state.buffer ? state.buffer + ' ' + text : text;
     state.lastUpdate = Date.now();
-    
+
     // Clear old timer, set new one
     if (state.silenceTimer) clearTimeout(state.silenceTimer);
-    
+
     state.silenceTimer = setTimeout(async () => {
         if (state.buffer && !state.processing) {
             // Check if text is meaningful (not blank/empty)
@@ -617,20 +625,42 @@ async function processVoiceAudio(guildId, audioBuffer, userId) {
                 state.processing = false;
                 return;
             }
-            
+
+            // Check wake word (unless ALWAYS_RESPOND is enabled)
+            const lowerText = finalText.toLowerCase();
+            const hasWakeWord = lowerText.includes(config.WAKE_WORD.toLowerCase()) ||
+                               lowerText.includes('hey kimori') ||
+                               lowerText.includes('okay kimori') ||
+                               lowerText.includes('hey openclaw');
+
+            if (!config.ALWAYS_RESPOND && !hasWakeWord) {
+                console.log(`📝 No wake word detected ("${finalText}"), skipping AI response`);
+                state.processing = false;
+                return;
+            }
+
+            // Remove wake word from text for cleaner prompt
+            const cleanText = lowerText
+                .replace(new RegExp(config.WAKE_WORD.toLowerCase(), 'g'), '')
+                .replace(/hey\s*kimori/gi, '')
+                .replace(/okay\s*kimori/gi, '')
+                .replace(/hey\s*openclaw/gi, '')
+                .replace(/^\s*[,.]+\s*/, '')
+                .trim() || finalText;
+
             state.processing = true;
             state.buffer = '';
-            
-            console.log(`📝 Sending to AI: "${finalText}"`);
-            
-            const response = await sendToOpenClaw(`User said: "${finalText}" - respond naturally. If you want to play music, just say so naturally.`);
+
+            console.log(`📝 Sending to AI: "${cleanText}"`);
+
+            const response = await sendToOpenClaw(cleanText, guildId);
             console.log(`🤖 AI response: ${response.substring(0, 100)}...`);
-            
+
             // Speak the response
             if (response && !response.startsWith('Error:') && response.length < 500) {
                 await speak(response, guildId);
             }
-            
+
             state.processing = false;
         }
     }, config.SILENCE_THRESHOLD_MS);
@@ -659,14 +689,14 @@ const recordingState = new Map(); // guildId -> { recording: bool, chunks: [], u
 function setupVoiceReceiver(guildId, connection) {
     const receiver = connection.receiver;
     const userBuffers = new Map(); // userId -> { chunks: [], timeout: null }
-    
+
     console.log(`🎤 Setting up voice receiver for guild ${guildId}`);
-    
+
     // Initialize recording state for this guild
     if (!recordingState.has(guildId)) {
         recordingState.set(guildId, { recording: false, chunks: [], userId: null });
     }
-    
+
     receiver.speaking.on('start', (userId) => {
         console.log(`🔊 Speaking started: user ${userId}`);
         if (!userBuffers.has(userId)) {
@@ -674,33 +704,33 @@ function setupVoiceReceiver(guildId, connection) {
         }
         const ub = userBuffers.get(userId);
         if (ub.timeout) clearTimeout(ub.timeout);
-        
+
         // Get recording state
         const recState = recordingState.get(guildId);
         console.log(`📡 Recording state: ${recState?.recording}, chunks so far: ${recState?.chunks?.length || 0}`);
-        
+
         if (!receiver.subscriptions.has(userId)) {
             console.log(`📡 Subscribing to audio for user ${userId}`);
-            
+
             // Create decoder using OpusEncoder (can decode Opus packets)
             if (!Opus) {
                 console.error('❌ Opus not available, cannot decode audio');
                 return;
             }
             const decoder = new Opus(48000, 2);
-            
+
             const stream = receiver.subscribe(userId, {
                 mode: { type: 'opus' }
             });
-            
+
             if (stream) {
                 // For raw opus packets, we don't need to decode - just collect them
                 // The receiver.subscribe with opus mode gives us opus packets directly
                 console.log(`📡 Subscribed to stream for user ${userId}, recording=${recState?.recording}`);
-                
+
                 stream.on('data', (opusPacket) => {
                     console.log(`📡 Received ${opusPacket.length} byte packet`);
-                    
+
                     // Decode Opus to PCM
                     let pcmBuffer;
                     try {
@@ -709,7 +739,7 @@ function setupVoiceReceiver(guildId, connection) {
                         console.error(`❌ Decode error: ${e.message}`);
                         return;
                     }
-                    
+
                     if (userBuffers.has(userId)) {
                         userBuffers.get(userId).chunks.push(pcmBuffer);
                     }
@@ -725,12 +755,12 @@ function setupVoiceReceiver(guildId, connection) {
             }
         }
     });
-    
+
     receiver.speaking.on('end', (userId) => {
         console.log(`🔇 Speaking ended: user ${userId}`);
         const ub = userBuffers.get(userId);
         if (!ub) return;
-        
+
         ub.timeout = setTimeout(() => {
             if (ub.chunks.length > 0) {
                 console.log(`📝 Processing ${ub.chunks.length} audio chunks for user ${userId}`);
@@ -747,11 +777,11 @@ function setupVoiceReceiver(guildId, connection) {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     if (!message.guild) return;
-    
+
     const member = message.member;
     const voiceChannel = member?.voice?.channel;
     const guildId = message.guild.id;
-    
+
     // Auto-join if user is in voice
     if (voiceChannel && !voiceConnections.has(guildId)) {
         try {
@@ -761,29 +791,29 @@ client.on('messageCreate', async (message) => {
                 adapterCreator: message.guild.voiceAdapterCreator,
                 selfDeaf: false, selfMute: false
             });
-            
+
             const player = createAudioPlayer();
             connection.subscribe(player);
             setupVoiceReceiver(guildId, connection);
-            
+
             voiceConnections.set(guildId, { connection, player, channelId: voiceChannel.id, isListening: true });
-            
+
             connection.on(VoiceConnectionStatus.Destroyed, () => {
                 voiceConnections.delete(guildId);
                 queues.delete(guildId);
                 transcriptionState.delete(guildId);
             });
-            
+
             await message.reply('🎤 Joined your voice channel!');
         } catch (e) {
             console.error('Join error:', e);
         }
     }
-    
+
     // Process commands
     const content = message.content.toLowerCase().trim();
     const vc = voiceConnections.get(guildId);
-    
+
     if (content === 'listen') {
         if (vc) { vc.isListening = true; await message.reply('👂 Listening started!'); }
     } else if (content === 'stop listening') {
@@ -809,11 +839,11 @@ client.on('messageCreate', async (message) => {
 // ===============================
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isCommand()) return;
-    
+
     const { commandName, member, guild } = interaction;
     const guildId = interaction.guildId;
     const vc = voiceConnections.get(guildId);
-    
+
     // Auto-join helper
     const ensureVoice = async () => {
         try {
@@ -823,34 +853,34 @@ client.on('interactionCreate', async (interaction) => {
                 await interaction.editReply('🎤 Ready in voice!');
                 return vc;
             }
-            
+
             // Need to join - defer the reply first
             await interaction.deferReply();
-            
+
             if (!member?.voice?.channel) {
                 await interaction.editReply('❌ Join a voice channel first!');
                 return null;
             }
-            
+
             const connection = joinVoiceChannel({
                 channelId: member.voice.channel.id,
                 guildId: guildId,
                 adapterCreator: guild.voiceAdapterCreator,
                 selfDeaf: false, selfMute: false
             });
-            
+
             const player = createAudioPlayer();
             connection.subscribe(player);
             setupVoiceReceiver(guildId, connection);
-            
+
             const newVc = { connection, player, channelId: member.voice.channel.id, isListening: true };
             voiceConnections.set(guildId, newVc);
-            
+
             connection.on(VoiceConnectionStatus.Destroyed, () => {
                 voiceConnections.delete(guildId);
                 queues.delete(guildId);
             });
-            
+
             await interaction.editReply('🎤 Joined!');
             return newVc;
         } catch (e) {
@@ -861,13 +891,13 @@ client.on('interactionCreate', async (interaction) => {
             return null;
         }
     };
-    
+
     switch (commandName) {
         case 'join':
             // ensureVoice handles the response
             await ensureVoice();
             break;
-            
+
         case 'voice':
             // Join voice and start listening automatically
             const voiceVc = await ensureVoice();
@@ -877,7 +907,7 @@ client.on('interactionCreate', async (interaction) => {
                 console.log(`👂 Listening enabled for guild ${guildId}`);
             }
             break;
-            
+
         case 'leave':
             if (vc) {
                 vc.connection.destroy();
@@ -888,7 +918,7 @@ client.on('interactionCreate', async (interaction) => {
                 await interaction.reply('❌ Not in voice!');
             }
             break;
-            
+
         case 'play':
             const pvc = await ensureVoice();
             if (pvc) {
@@ -896,25 +926,25 @@ client.on('interactionCreate', async (interaction) => {
                 await playMusic(query, guildId, interaction);
             }
             break;
-            
+
         case 'search':
             const svc = await ensureVoice();
             if (svc) {
                 const query = interaction.options.getString('query');
                 console.log(`🔍 AI search for: ${query}`);
-                const result = await sendToOpenClaw(`Find a live stream, radio station, or audio URL for "${query}". Search the entire web - it can be YouTube, Twitch, a radio station (like iHeartRadio, TuneIn), or any direct audio stream URL. Just give me a direct playable URL or "none" if you can't find one.`);
+                const result = await sendToOpenClaw(`Find a live stream, radio station, or audio URL for "${query}". Search the entire web - it can be YouTube, Twitch, a radio station (like iHeartRadio, TuneIn), or any direct audio stream URL. Just give me a direct playable URL or "none" if you can't find one.`, guildId);
                 console.log(`🔍 AI result: ${result}`);
-                
+
                 // If AI didn't find anything useful
                 if (!result || result.includes('none') || result.length < 10) {
                     await interaction.editReply(`❌ Could not find a stream for "${query}"`);
                     return;
                 }
-                
+
                 await playMusic(result, guildId, interaction, true);
             }
             break;
-            
+
         case 'stream':
             const stvc = await ensureVoice();
             if (stvc) {
@@ -922,7 +952,7 @@ client.on('interactionCreate', async (interaction) => {
                 await playMusic(url, guildId, interaction);
             }
             break;
-            
+
         case 'queue':
             const q = getQueue(guildId);
             if (q.length === 0) {
@@ -931,7 +961,7 @@ client.on('interactionCreate', async (interaction) => {
                 await interaction.reply('🎵 **Queue:**\n' + q.map((s, i) => `${i+1}. ${s.title}`).join('\n'));
             }
             break;
-            
+
         case 'skip':
             if (vc?.player) {
                 vc.player.stop();
@@ -942,7 +972,7 @@ client.on('interactionCreate', async (interaction) => {
                 await interaction.reply('❌ Nothing playing');
             }
             break;
-            
+
         case 'stop':
             if (vc?.player) {
                 vc.player.stop();
@@ -950,21 +980,21 @@ client.on('interactionCreate', async (interaction) => {
                 await interaction.reply('⏹️ Stopped and cleared queue!');
             }
             break;
-            
+
         case 'clear':
             clearQueue(guildId);
             await interaction.reply('🗑️ Queue cleared!');
             break;
-            
+
         case 'listen':
             if (vc) { vc.isListening = true; await interaction.reply('👂 Listening started!'); }
             else await interaction.reply('❌ Join voice first!');
             break;
-            
+
         case 'stop_listen':
             if (vc) { vc.isListening = false; await interaction.reply('🛑 Stopped listening.'); }
             break;
-            
+
         case 'record':
             if (vc) {
                 if (!recordingState.has(guildId)) {
@@ -977,23 +1007,23 @@ client.on('interactionCreate', async (interaction) => {
                 await interaction.reply('❌ Join voice first!');
             }
             break;
-            
+
         case 'stop_record':
             if (vc) {
                 const recState = recordingState.get(guildId);
                 console.log(`📹 Stop recording: ${recState?.chunks?.length || 0} chunks`);
                 if (recState && recState.chunks.length > 0) {
                     await interaction.reply('⏹️ Processing recording...');
-                    
+
                     console.log(`📹 Converting ${recState.chunks.length} chunks (${Buffer.concat(recState.chunks).length} bytes)`);
-                    
+
                     // Convert opus packets to WAV
                     const wavBuffer = await convertOpusToWav(Buffer.concat(recState.chunks));
-                    
+
                     // Send to Discord
                     const attachment = { attachment: wavBuffer, name: 'recording.wav' };
                     await interaction.channel.send({ files: [attachment] });
-                    
+
                     recState.chunks = [];
                     recState.recording = false;
                 } else {
@@ -1003,13 +1033,13 @@ client.on('interactionCreate', async (interaction) => {
                 await interaction.reply('❌ Not in voice!');
             }
             break;
-            
+
         case 'say':
             const text = interaction.options.getString('text');
             await speak(text, guildId);
             await interaction.reply(`🗣️ Said: ${text}`);
             break;
-            
+
         case 'help':
             await interaction.reply({ embeds: [new EmbedBuilder()
                 .setTitle('🤖 OpenClaw Voice Commands')
