@@ -414,7 +414,7 @@ async function speak(text, guildId) {
 // Store conversation history per guild for context
 const conversationHistory = new Map(); // guildId -> [{role, content}]
 
-async function sendToOpenClaw(text, guildId) {
+async function sendToOpenClaw(text, guildId, voiceChannelId) {
     // Get or initialize conversation history for this guild
     if (!conversationHistory.has(guildId)) {
         // Build initial context
@@ -461,11 +461,12 @@ async function sendToOpenClaw(text, guildId) {
     }
     
     // Use openclaw agent CLI for session-based responses
+    // Use voice channel ID for unique session context per voice channel
+    const sessionLabel = `discord:voice-${guildId}-${voiceChannelId}`;
     return new Promise((resolve) => {
         const proc = spawn('openclaw', [
             'agent',
-            '--channel', 'discord',
-            '--to', guildId.toString(),
+            '--session', sessionLabel,
             '--message', text,
             '--timeout', '30'
         ], {
@@ -636,11 +637,17 @@ async function processVoiceAudio(guildId, audioBuffer, userId) {
             }
 
             // Check wake word (unless ALWAYS_RESPOND is enabled)
-            const lowerText = finalText.toLowerCase();
-            const hasWakeWord = lowerText.includes(config.WAKE_WORD.toLowerCase()) ||
-                               lowerText.includes('hey kimori') ||
-                               lowerText.includes('okay kimori') ||
-                               lowerText.includes('hey openclaw');
+            // Strip punctuation and normalize for better detection
+            const normalizedText = finalText.toLowerCase().replace(/^[,\.\s]+|[,\.\s]+$/g, '').replace(/\s+/g, ' ');
+            const wakeLower = config.WAKE_WORD.toLowerCase();
+            const hasWakeWord = normalizedText.includes(wakeLower) ||
+                               normalizedText.includes('echo') ||
+                               normalizedText.includes('hey kimori') ||
+                               normalizedText.includes('okay kimori') ||
+                               normalizedText.includes('hey openclaw') ||
+                               normalizedText.includes('ok kimori') ||
+                               normalizedText.startsWith(wakeLower) ||
+                               normalizedText.startsWith('echo');
 
             if (!config.ALWAYS_RESPOND && !hasWakeWord) {
                 console.log(`📝 No wake word detected ("${finalText}"), skipping AI response`);
@@ -649,7 +656,7 @@ async function processVoiceAudio(guildId, audioBuffer, userId) {
             }
 
             // Remove wake word from text for cleaner prompt
-            const cleanText = lowerText
+            const cleanText = normalizedText
                 .replace(new RegExp(config.WAKE_WORD.toLowerCase(), 'g'), '')
                 .replace(/hey\s*kimori/gi, '')
                 .replace(/okay\s*kimori/gi, '')
@@ -662,7 +669,9 @@ async function processVoiceAudio(guildId, audioBuffer, userId) {
 
             console.log(`📝 Sending to AI: "${cleanText}"`);
 
-            const response = await sendToOpenClaw(cleanText, guildId);
+            // Get voice channel ID for session isolation
+            const voiceChannelId = voiceConnections.get(guildId)?.channelId || 'general';
+            const response = await sendToOpenClaw(cleanText, guildId, voiceChannelId);
             console.log(`🤖 AI response: ${response.substring(0, 100)}...`);
 
             // Speak the response
