@@ -1,0 +1,45 @@
+{
+  "name": "@kimori/openclaw-voice",
+  "version": "2.0.0",
+  "description": "OpenClaw Discord Voice Bot - Enterprise Node.js rewrite with VAD, interrupt handling, and AI integration",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "node --test src/**/*.test.js"
+  },
+  "keywords": [
+    "discord",
+    "voice",
+    "tts",
+    "vad",
+    "openclaw",
+    "bot"
+  ],
+  "author": "Kimori",
+  "license": "MIT",
+  "dependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/voice": "^0.18.0",
+    "@xenova/transformers": "^2.17.2",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "gtts": "^0.2.1",
+    "node-opus": "^0.3.3",
+    "opus-decoder": "^0.7.11",
+    "opusscript": "^0.0.8",
+    "play-dl": "^1.9.7",
+    "webrtcvad": "^1.0.1",
+    "whisper-node": "^1.1.1",
+    "ytdl-core": "^4.11.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ]
+}

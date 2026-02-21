@@ -1,148 +1,83 @@
 ---
 name: openclaw-voice
-description: Discord voice bot with VAD, OpenClaw AI integration, TTS, and interrupt handling. Pure Node.js.
+description: Discord voice bot with FasterWhisper transcription, OpenClaw AI integration via agent CLI, TTS, and wake word detection.
 metadata:
   openclaw:
     emoji: "🎤"
     requires:
-      bins: ["node", "npm", "ffmpeg", "whisper"]
-      env:
-        - DISCORD_TOKEN
-        - DISCORD_GUILD_ID
-        - OPENCLAW_API
-        - OPENCLAW_GATEWAY_PASSWORD
-        - WAKE_WORD (default: "kimori")
-        - RESPONSE_MODE (default: "ai")
-        - TTS_ENGINE (default: "gtts")
-    context:
-      voice:
-        # This context is automatically injected when AI is called from voice
-        in_voice_channel: boolean
-        members_in_channel: string[]
-        currently_playing: string | null
-        queue_length: number
-        capabilities: string[]
+      bins: ["node", "npm", "ffmpeg", "python3"]
+      npm: ["discord.js", "@discordjs/voice", "express"]
+      pip: ["faster-whisper", "aiohttp"]
 ---
 
-# OpenClaw Voice Skill
+# OpenClaw Voice
 
-Discord voice bot with Voice Activity Detection (VAD), AI-powered conversations via OpenClaw, TTS playback, and interrupt handling. **Pure Node.js rewrite.**
+Discord voice bot with voice transcription, AI conversation via OpenClaw, and TTS. Uses local FasterWhisper for transcription and OpenClaw agent CLI for context-aware responses.
 
 ## Architecture
 
 ```
 User speaks in voice
   → Discord speaking events (VAD)
-  → Gather voice context (members, playing, queue)
-  → Send to OpenClaw via /v1/chat/completions with voice context
-  → OpenClaw AI processes (knows it's in voice, can play music, etc.)
-  → Response → gTTS/ElevenLabs → Play audio
-  → Interrupt handling for natural conversation
+  → Capture audio → FasterWhisper transcription
+  → Check wake word (unless ALWAYS_RESPOND=true)
+  → Send to OpenClaw via 'openclaw agent' CLI (session reuse = context!)
+  → Response → gTTS → Play audio
 ```
 
-## Voice Context
+## Key Features
 
-When the AI receives a voice message, it automatically gets context about:
-
-```json
-{
-  "in_voice_channel": true,
-  "members_in_channel": ["Kevin", "OtherUser"],
-  "currently_playing": "Song Name by Artist",
-  "queue_length": 5,
-  "capabilities": [
-    "play music (say 'play <song name>' to play a song)",
-    "skip song (say 'skip' to skip)",
-    "search for streams",
-    "control playback",
-    "general conversation"
-  ]
-}
-```
-
-The AI uses this to understand it's in a voice chat and can respond accordingly (e.g., "Sure, let me play that song!").
+- **Session Reuse**: Uses `openclaw agent --channel discord --to <guildId>` for persistent context
+- **Wake Word Detection**: Only responds when wake word detected (configurable)
+- **Local Transcription**: FasterWhisper (no external API)
+- **No Emojis**: System prompt instructs AI to avoid emojis (don't translate well to speech)
 
 ## Setup
 
 ### 1. Install Dependencies
 
 ```bash
-# Core dependencies
-apt install -y ffmpeg
+# Core
+apt install -y ffmpeg nodejs npm
 
-# For transcription (voice-to-text)
-pip install openai-whisper --break-system-packages
-# Or on Mac: brew install whisper
+# Transcription (FasterWhisper - runs as local server)
+pip install faster-whisper aiohttp
 
-# Clone and setup the bot
+# Clone
 git clone https://github.com/kimoribot/openclaw-voice.git
 cd openclaw-voice
 npm install
-cp .env.example .env
 ```
 
-### 2. Discord Bot Setup
-
-1. Go to https://discord.com/developers/applications
-2. Create application → Bot
-3. Enable **Server Members Intent** (required for voice)
-4. Enable **Message Content Intent**
-5. Generate OAuth2 URL: `bot` + `voice channels` scopes
-6. Copy token
-
-### 2. OpenClaw Setup (Required for AI)
-
-Enable the Chat Completions endpoint:
+### 2. Start Whisper Server
 
 ```bash
-openclaw config patch --json '{"gateway":{"http":{"endpoints":{"chatCompletions":{"enabled":true}}}}}'
+# Start in background
+python3 /workspace/whisper-server.py &
 ```
 
-Get the gateway password from your `openclaw.json`:
-```bash
-grep -A2 '"auth"' /root/.openclaw/openclaw.json
-```
-
-### 3. Install Voice Bot
-
-```bash
-git clone https://github.com/kimoribot/openclaw-voice.git
-cd openclaw-voice
-npm install
-cp .env.example .env
-```
-
-### 4. Configure .env
+### 3. Configure .env
 
 ```env
 # Discord
-DISCORD_TOKEN=your_discord_bot_token
+DISCORD_BOT_TOKEN=your_discord_bot_token
 DISCORD_GUILD_ID=your_server_id
 
-# OpenClaw Integration (REQUIRED)
+# OpenClaw
 OPENCLAW_API=http://localhost:18789
 OPENCLAW_GATEWAY_PASSWORD=your_gateway_password
 
-# TTS (default: gTTS - free)
-TTS_ENGINE=gtts
-# Or for better voice (requires API key):
-# TTS_ENGINE=elevenlabs
-# ELEVENLABS_API_KEY=your_key
-# TTS_VOICE=21m00Tcm4TlvDq8ikWAM
-
-# Server
-PORT=5000
-
-# Voice Settings
-WAKE_WORD=kimori          # Wake word to trigger response (or "echo" to repeat everything)
-RESPONSE_MODE=ai          # "ai" = AI response, "echo" = repeat user speech
-ALWAYS_RESPOND=false      # If true, always respond even without wake word
+# Voice Settings  
+WAKE_WORD=kimori          # Wake word to trigger response
+ALWAYS_RESPOND=false      # If true, respond to everything
+RESPONSE_MODE=ai          # "ai" = AI, "echo" = repeat speech
+DISCORD_CHANNEL_ID=        # Optional: specific channel for AI
 ```
 
-### 5. Run
+### 4. Run
 
 ```bash
-npm start
+node src/index.js
 ```
 
 ## Commands
@@ -151,161 +86,66 @@ npm start
 |---------|-------------|
 | `/join` | Join your voice channel |
 | `/leave` | Leave voice channel |
-| `/play [query]` | Search YouTube and play a song |
-| `/search [query]` | AI web search for any stream (radio, YouTube, Twitch, etc.) |
-| `/stream [url]` | Play a direct audio stream URL |
-| `/queue` | Show current queue |
-| `/skip` | Skip current song |
-| `/stop` | Stop playing and clear queue |
-| `/clear` | Clear the queue |
-| `/listen` | Start AI voice conversation (VAD + OpenClaw) |
-| `/stop_listen` | Stop listening |
+| `/play [query]` | Search YouTube and play |
+| `/search [query]` | AI search for streams |
+| `/stream [url]` | Play direct audio URL |
+| `/queue` | Show queue |
+| `/skip` | Skip song |
+| `/stop` | Stop and clear |
+| `/voice` | Start AI voice conversation |
 | `/say [text]` | Speak text via TTS |
-| `/help` | Show help |
 
-## Audio Sources
+## How Voice Conversation Works
 
-The bot supports multiple audio sources:
+1. User says wake word + message in voice (e.g., "Kimori, what's the weather?")
+2. Bot captures audio, transcribes with FasterWhisper
+3. Wake word detected → sends to OpenClaw
+4. OpenClaw processes via `openclaw agent` (reuses session per channel!)
+5. Response spoken via TTS
 
-- **YouTube** - Videos and music via `/play`
-- **Direct URLs** - Any direct audio stream (MP3, OGG, etc.) via `/stream`
-- **Web Search** - AI searches the entire web for streams via `/search`
+### Wake Word Variations
+- Configured WAKE_WORD (default: "kimori")
+- "hey kimori"
+- "okay kimori"
+- "hey openclaw"
 
-### /search Command
+### IMPORTANT: Music Control
 
-The `/search` command uses OpenClaw AI to search the entire web for any playable audio:
-- YouTube videos
-- Radio stations (iHeartRadio, TuneIn, etc.)
-- Twitch streams
-- Direct audio URLs
-- Any other streaming audio
+The AI cannot directly control music. When users ask to play music:
+- AI responds: "Type /play [song name] in chat to play music"
+- Users must use slash commands in Discord text chat
 
-Example: `/search lofi hip hop radio` - AI finds a live radio stream
+This is by design - the AI is a *helper* in voice, not the music bot controller.
 
 ## REST API
 
 ```bash
-# Health check
+# Health
 curl http://localhost:5000/health
 
-# Debug info
-curl http://localhost:5000/debug
-
-# Speak text
+# Speak
 curl -X POST http://localhost:5000/speak \
   -H "Content-Type: application/json" \
   -d '{"guild_id": "123", "text": "Hello!"}'
-
-# Start listening (VAD)
-curl -X POST http://localhost:5000/listen \
-  -H "Content-Type: application/json" \
-  -d '{"guild_id": "123"}'
-
-# Stop listening
-curl -X POST http://localhost:5000/stop_listen \
-  -H "Content-Type: application/json" \
-  -d '{"guild_id": "123"}'
 ```
-
-## OpenClaw Integration
-
-### How It Works
-
-1. User joins voice and runs `/listen`
-2. Bot detects when user starts/stops speaking (via Discord's speaking events)
-3. Audio captured → sent to OpenClaw via `/v1/chat/completions`
-4. OpenClaw processes → returns response
-5. Response → TTS → played to voice channel
-
-### Communication Protocol
-
-```javascript
-// Bot → OpenClaw (POST /v1/chat/completions)
-{
-  model: "openclaw",
-  messages: [
-    { role: "system", content: "You are Kimori, a helpful AI assistant." },
-    { role: "user", content: "[User spoke in voice - respond naturally]" }
-  ],
-  max_tokens: 200
-}
-
-// OpenClaw → Bot
-{
-  choices: [{ message: { content: "Hello! How can I help?" } }]
-}
-```
-
-### Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENCLAW_API` | Yes | OpenClaw gateway URL (e.g., `http://localhost:18789`) |
-| `OPENCLAW_GATEWAY_PASSWORD` | If auth mode=password | Gateway password |
-| `OPENCLAW_GATEWAY_TOKEN` | If auth mode=token | Gateway token |
-| `OPENCLAW_API_KEY` | If using API key | Direct API key |
-| `OPENCLAW_SESSION` | No | Session name (default: main) |
-
-#### Auth Modes
-
-OpenClaw supports different auth configurations. Use the one matching your setup:
-
-**Password mode (default):**
-```env
-OPENCLAW_GATEWAY_PASSWORD=your_password
-```
-
-**Token mode:**
-```env
-OPENCLAW_GATEWAY_TOKEN=your_token
-```
-
-**No auth (local/dev):**
-```env
-# Leave auth vars empty
-OPENCLAW_API=http://localhost:18789
-```
-
-## TTS Options
-
-### gTTS (Default - Free)
-```env
-TTS_ENGINE=gtts
-```
-- Free, no API key needed
-- Robotic but reliable
-- Uses Google Translate
-
-### ElevenLabs (Premium)
-```env
-TTS_ENGINE=elevenlabs
-ELEVENLABS_API_KEY=your_api_key
-TTS_VOICE=21m00Tcm4TlvDq8ikWAM
-```
-- Natural voice quality
-- 10k chars free/month
 
 ## Troubleshooting
 
 ```bash
-# Check if bot is running
+# Check whisper server
+curl -X POST http://localhost:5001/transcribe \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/tmp/test.wav"}'
+
+# Check bot
 curl http://localhost:5000/health
 
-# Test OpenClaw API directly
-curl -X POST http://localhost:18789/v1/chat/completions \
-  -H 'Authorization: Bearer YOUR_PASSWORD' \
-  -H 'Content-Type: application/json' \
-  -d '{"model": "openclaw", "messages": [{"role": "user", "content": "hi"}]}'
-
-# View logs
-tail -f /tmp/openclaw-voice.log
+# Test OpenClaw
+openclaw agent --channel discord --to 1474223195786711113 --message "hello"
 ```
 
-### Common Issues
+## Files
 
-- **Bot not joining voice**: Check Discord permissions (Connect, Speak)
-- **No AI responses**: 
-  1. Run: `curl http://localhost:5000/debug` to check config
-  2. Test OpenClaw API directly (see above)
-  3. Verify `OPENCLAW_GATEWAY_PASSWORD` is correct
-- **TTS not working**: Check `TTS_ENGINE` setting
+- Bot: `src/index.js`
+- Whisper server: `whisper-server.py`
+- Config: `.env`
