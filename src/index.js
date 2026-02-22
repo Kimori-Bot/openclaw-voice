@@ -1185,7 +1185,7 @@ app.post('/join', async (req, res) => {
             guildId: guild_id,
             adapterCreator: guild.voiceAdapterCreator,
             selfDeaf: false,
-            selfMute: true
+            selfMute: false
         });
         
         voiceConnections.set(guild_id, { connection, player: connection.state.subscription?.player, channelId: targetChannel, isListening: true });
