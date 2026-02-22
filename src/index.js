@@ -1162,6 +1162,43 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', guilds: client.guilds.cache.size, connections: Array.from(voiceConnections.keys()) });
 });
 
+app.post('/join', async (req, res) => {
+    const { guild_id, channel_id, user_id } = req.body;
+    if (!guild_id) return res.status(400).json({ error: 'guild_id required' });
+    
+    try {
+        const guild = client.guilds.cache.get(guild_id);
+        if (!guild) return res.status(404).json({ error: 'Guild not found' });
+        
+        // Find user's voice channel
+        let targetChannel = channel_id;
+        if (!targetChannel) {
+            const member = user_id ? await guild.members.fetch(user_id).catch(() => null) : null;
+            targetChannel = member?.voice?.channelId;
+        }
+        
+        if (!targetChannel) return res.status(400).json({ error: 'No voice channel found' });
+        
+        // Join the channel using proper adapter
+        const connection = joinVoiceChannel({
+            channelId: targetChannel,
+            guildId: guild_id,
+            adapterCreator: guild.voiceAdapterCreator,
+            selfDeaf: false,
+            selfMute: true
+        });
+        
+        voiceConnections.set(guild_id, { connection, player: connection.state.subscription?.player, channelId: targetChannel, isListening: true });
+        
+        // Setup receiver
+        setupVoiceReceiver(guild_id, connection);
+        
+        res.json({ status: 'joined', channel_id: targetChannel });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/play', async (req, res) => {
     const { url, guild_id } = req.body;
     if (!url || !guild_id) return res.status(400).json({ error: 'url and guild_id required' });
