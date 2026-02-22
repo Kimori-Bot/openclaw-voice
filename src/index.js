@@ -70,6 +70,12 @@ const config = {
     // Thinking words - played while waiting for AI response
     THINKING_PHRASES: (process.env.THINKING_PHRASES || 'hmm,let me think,uh,um,okay,give me a moment').split(',').map(w => w.trim()),
     THINKING_ENABLED: process.env.THINKING_ENABLED !== 'false',
+    // ElevenLabs TTS (optional)
+    ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || '',
+    ELEVENLABS_VOICE_ID: process.env.ELEVENLABS_VOICE_ID || 'rachel',
+    ELEVENLABS_MODEL: process.env.ELEVENLABS_MODEL || 'eleven_monolingual_v1',
+    ELEVENLABS_STABILITY: process.env.ELEVENLABS_STABILITY || 0.5,
+    ELEVENLABS_SIMILARITY: process.env.ELEVENLABS_SIMILARITY || 0.75,
     RESPONSE_MODE: process.env.RESPONSE_MODE || 'ai', // 'ai' = respond with AI, 'echo' = just repeat
     ALWAYS_RESPOND: process.env.ALWAYS_RESPOND === 'true',
 };
@@ -441,6 +447,8 @@ async function speak(text, guildId) {
 
     try {
         const audioBuffer = await textToSpeech(text);
+        
+        // Save to temp file and play
         const tempFile = `/tmp/openclaw-tts-${guildId}-${Date.now()}.mp3`;
         writeFileSync(tempFile, audioBuffer);
 
@@ -453,6 +461,57 @@ async function speak(text, guildId) {
     } catch (e) {
         console.error('TTS error:', e.message);
     }
+}
+
+// ===============================
+// TEXT TO SPEECH
+// ===============================
+async function textToSpeech(text) {
+    // Use ElevenLabs if API key is configured
+    if (config.ELEVENLABS_API_KEY) {
+        try {
+            const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${config.ELEVENLABS_VOICE_ID || 'rachel'}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'xi-api-key': config.ELEVENLABS_API_KEY
+                },
+                body: JSON.stringify({
+                    text: text,
+                    model_id: config.ELEVENLABS_MODEL || 'eleven_monolingual_v1',
+                    voice_settings: {
+                        stability: config.ELEVENLABS_STABILITY || 0.5,
+                        similarity_boost: config.ELEVENLABS_SIMILARITY || 0.75
+                    }
+                })
+            });
+            
+            if (response.ok) {
+                return Buffer.from(await response.arrayBuffer());
+            }
+            console.log('ElevenLabs failed, falling back to gTTS');
+        } catch (e) {
+            console.log('ElevenLabs error:', e.message);
+        }
+    }
+    
+    // Fallback to gTTS
+    return new Promise((resolve, reject) => {
+        const tempFile = `/tmp/openclaw-tts-${Date.now()}.mp3`;
+        const gtts = spawn('gtts-cli', [text, '--output', tempFile]);
+        
+        gtts.on('close', (code) => {
+            if (code === 0) {
+                const data = readFileSync(tempFile);
+                try { unlinkSync(tempFile); } catch(e) {}
+                resolve(data);
+            } else {
+                reject(new Error(`gTTS failed with code ${code}`));
+            }
+        });
+        
+        gtts.on('error', reject);
+    });
 }
 
 // ===============================
