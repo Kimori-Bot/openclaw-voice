@@ -61,17 +61,12 @@ const config = {
     WHISPER_SERVER: process.env.WHISPER_SERVER || 'http://127.0.0.1:5001',
     WHISPER_AUTOSTART: process.env.WHISPER_AUTOSTART !== 'false',
     WHISPER_MODEL: process.env.WHISPER_MODEL || 'medium',
-    SILENCE_THRESHOLD_MS: 1500,
-    WAKE_WORD: process.env.WAKE_WORD || 'echo',
-    // Bot identity
-    BOT_NAME: process.env.BOT_NAME || 'Kimori',
-    // Parse comma-separated wake words into array
-    WAKE_WORDS: (process.env.WAKE_WORD || 'echo').split(',').map(w => w.trim().toLowerCase()).filter(Boolean),
-    // Thinking words - played while waiting for AI response
-    THINKING_PHRASES: (process.env.THINKING_PHRASES || 'hmm,let me think,uh,um,okay,give me a moment').split(',').map(w => w.trim()),
-    THINKING_ENABLED: process.env.THINKING_ENABLED !== 'false',
-    // ElevenLabs TTS (optional)
+    // STT Engine: 'local' (FasterWhisper) or 'elevenlabs'
+    STT_ENGINE: process.env.STT_ENGINE || 'local',
+    // ElevenLabs (STT and TTS)
     ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || '',
+    // TTS Engine: 'local' (gTTS) or 'elevenlabs'
+    TTS_ENGINE: process.env.TTS_ENGINE || 'elevenlabs',
     ELEVENLABS_VOICE_ID: process.env.ELEVENLABS_VOICE_ID || 'rachel',
     ELEVENLABS_MODEL: process.env.ELEVENLABS_MODEL || 'eleven_monolingual_v1',
     ELEVENLABS_STABILITY: process.env.ELEVENLABS_STABILITY || 0.5,
@@ -423,9 +418,38 @@ async function playMusic(url, guildId, message = null, isSearch = false) {
 }
 
 // ===============================
-// TTS
+// TEXT TO SPEECH
 // ===============================
 async function textToSpeech(text) {
+    // Use ElevenLabs if configured
+    if (config.TTS_ENGINE === 'elevenlabs' && config.ELEVENLABS_API_KEY) {
+        try {
+            const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${config.ELEVENLABS_VOICE_ID || 'rachel'}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'xi-api-key': config.ELEVENLABS_API_KEY
+                },
+                body: JSON.stringify({
+                    text: text,
+                    model_id: config.ELEVENLABS_MODEL || 'eleven_monolingual_v1',
+                    voice_settings: {
+                        stability: config.ELEVENLABS_STABILITY || 0.5,
+                        similarity_boost: config.ELEVENLABS_SIMILARITY || 0.75
+                    }
+                })
+            });
+            
+            if (response.ok) {
+                return Buffer.from(await response.arrayBuffer());
+            }
+            console.log('ElevenLabs TTS failed, falling back to gTTS');
+        } catch (e) {
+            console.log('ElevenLabs TTS error:', e.message);
+        }
+    }
+    
+    // Fallback to gTTS
     return new Promise((resolve, reject) => {
         const tempFile = `/tmp/openclaw-tts-${Date.now()}.mp3`;
         const gtts = spawn('gtts-cli', [text, '--output', tempFile]);
@@ -466,58 +490,6 @@ async function speak(text, guildId) {
 // ===============================
 // TEXT TO SPEECH
 // ===============================
-async function textToSpeech(text) {
-    // Use ElevenLabs if API key is configured
-    if (config.ELEVENLABS_API_KEY) {
-        try {
-            const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${config.ELEVENLABS_VOICE_ID || 'rachel'}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'xi-api-key': config.ELEVENLABS_API_KEY
-                },
-                body: JSON.stringify({
-                    text: text,
-                    model_id: config.ELEVENLABS_MODEL || 'eleven_monolingual_v1',
-                    voice_settings: {
-                        stability: config.ELEVENLABS_STABILITY || 0.5,
-                        similarity_boost: config.ELEVENLABS_SIMILARITY || 0.75
-                    }
-                })
-            });
-            
-            if (response.ok) {
-                return Buffer.from(await response.arrayBuffer());
-            }
-            console.log('ElevenLabs failed, falling back to gTTS');
-        } catch (e) {
-            console.log('ElevenLabs error:', e.message);
-        }
-    }
-    
-    // Fallback to gTTS
-    return new Promise((resolve, reject) => {
-        const tempFile = `/tmp/openclaw-tts-${Date.now()}.mp3`;
-        const gtts = spawn('gtts-cli', [text, '--output', tempFile]);
-        
-        gtts.on('close', (code) => {
-            if (code === 0) {
-                const data = readFileSync(tempFile);
-                try { unlinkSync(tempFile); } catch(e) {}
-                resolve(data);
-            } else {
-                reject(new Error(`gTTS failed with code ${code}`));
-            }
-        });
-        
-        gtts.on('error', reject);
-    });
-}
-
-// ===============================
-// OPENCLAW AI
-// ===============================
-// Store conversation history per guild for context
 const conversationHistory = new Map(); // guildId -> [{role, content}]
 
 async function sendToOpenClaw(text, guildId) {
@@ -647,7 +619,32 @@ IMPORTANT: You CANNOT directly control the music bot - you must tell users to us
 async function transcribeAudio(audioPath) {
     console.log(`🎤 Transcribing: ${audioPath}`);
 
-    // Use whisper server if available
+    // Use ElevenLabs STT if configured
+    if (config.STT_ENGINE === 'elevenlabs' && config.ELEVENLABS_API_KEY) {
+        try {
+            // Read audio file and send to ElevenLabs
+            const audioData = readFileSync(audioPath);
+            const formData = new FormData();
+            formData.append('file', new Blob([audioData]), 'audio.wav');
+            formData.append('model_id', 'scribe');
+            
+            const response = await fetch('https://api.elevenlabs.io/v1/scribe', {
+                method: 'POST',
+                headers: { 'xi-api-key': config.ELEVENLABS_API_KEY },
+                body: formData
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                console.log(`📝 Transcription (ElevenLabs): ${result.text}`);
+                return { text: result.text };
+            }
+        } catch(e) {
+            console.log(`⚠️ ElevenLabs STT error: ${e.message}`);
+        }
+    }
+
+    // Use local whisper server (FasterWhisper)
     try {
         const response = await fetch(config.WHISPER_SERVER + '/transcribe', {
             method: 'POST',
