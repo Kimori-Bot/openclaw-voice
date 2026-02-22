@@ -25,8 +25,10 @@ npm install
 cp .env.example .env
 # Edit .env with your bot token and settings
 
-# Start whisper server (required for STT)
-python3 whisper-server.py &
+# Start whisper.cpp server (fastest STT)
+# Download tiny model if not present:
+# mkdir -p ~/.whisper && wget -O ~/.whisper/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+whisper-server --model /root/.whisper/ggml-tiny.bin --port 5001 &
 
 # Start the bot
 node src/index.js
@@ -57,14 +59,15 @@ ELEVENLABS_API_KEY=your_key
 
 ## STT Options
 
-### Local (FasterWhisper) - Default
-- Uses tiny model for speed
-- Real-time streaming with VAD
-- No API costs
+### whisper.cpp (Default - Fastest)
+- C++ implementation, no Python overhead
+- Built-in server on port 5001
+- Tiny model for real-time speed
+- Start: `whisper-server --model /path/to/ggml-tiny.bin --port 5001`
 
-### ElevenLabs Scribe
-- Set `STT_ENGINE=elevenlabs`
-- Higher accuracy but uses API credits
+### FasterWhisper (Fallback)
+- Python implementation
+- Set `WHISPER_SERVER=http://127.0.0.1:5002` (different port)
 
 ## TTS Options
 
