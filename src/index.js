@@ -531,7 +531,7 @@ IMPORTANT: You CANNOT directly control the music bot - you must tell users to us
     // Use voice channel ID + guild ID for unique session per voice channel
     const vc = voiceConnections.get(guildId);
     const voiceChannelId = vc?.channelId || 'unknown';
-    const sessionId = `discord:${guildId}:${voiceChannelId}`;
+    const sessionId = `discord-${guildId}-${voiceChannelId}`;
     
     return new Promise((resolve) => {
         const proc = spawn('openclaw', [
