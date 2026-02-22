@@ -59,6 +59,7 @@ const config = {
     TOKEN: process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN,
     OPENCLAW_API: process.env.OPENCLAW_API || 'http://localhost:8080',
     WHISPER_SERVER: process.env.WHISPER_SERVER || 'http://127.0.0.1:5001',
+    WHISPER_AUTOSTART: process.env.WHISPER_AUTOSTART !== 'false',
     SILENCE_THRESHOLD_MS: 1500,
     WAKE_WORD: process.env.WAKE_WORD || 'echo',
     // Parse comma-separated wake words into array
@@ -66,6 +67,42 @@ const config = {
     RESPONSE_MODE: process.env.RESPONSE_MODE || 'ai', // 'ai' = respond with AI, 'echo' = just repeat
     ALWAYS_RESPOND: process.env.ALWAYS_RESPOND === 'true',
 };
+
+// === AUTO-START WHISPER SERVER ===
+async function startWhisperServer() {
+    if (!config.WHISPER_AUTOSTART) return;
+    
+    // Check if already running
+    try {
+        const response = await fetch(config.WHISPER_SERVER.replace('http://', 'http://') + '/', { 
+            method: 'GET',
+            signal: AbortSignal.timeout(2000)
+        });
+        if (response.ok) {
+            console.log('📝 Whisper server already running');
+            return;
+        }
+    } catch(e) {
+        // Not running, will start it
+    }
+    
+    const whisperPath = require('path').join(__dirname, '..', 'whisper-server.py');
+    const fs = require('fs');
+    
+    if (fs.existsSync(whisperPath)) {
+        console.log('📝 Starting whisper server...');
+        require('child_process').spawn('python3', [whisperPath], {
+            detached: true,
+            stdio: 'ignore'
+        }).unref();
+        
+        // Wait for server to start
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        console.log('📝 Whisper server started');
+    } else {
+        console.log('⚠️ whisper-server.py not found, skipping auto-start');
+    }
+}
 
 // === UTILITIES ===
 
@@ -468,7 +505,8 @@ async function sendToOpenClaw(text, guildId, voiceChannelId) {
     return new Promise((resolve) => {
         const proc = spawn('openclaw', [
             'agent',
-            '--session', sessionLabel,
+            '--channel', 'discord',
+            '--session-id', sessionLabel,
             '--message', text,
             '--timeout', '30'
         ], {
@@ -1089,7 +1127,10 @@ client.once('ready', async () => {
     console.log('📢 Commands registered');
 });
 
-client.login(config.TOKEN);
+// Start whisper server on boot
+startWhisperServer().then(() => {
+    client.login(config.TOKEN);
+});
 
 // Express API
 const app = express();
