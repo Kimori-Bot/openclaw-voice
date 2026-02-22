@@ -1,3 +1,6 @@
+# OpenClaw Voice - Systemd Service (Linux)
+# For other platforms, see SKILL.md for alternatives
+
 [Unit]
 Description=OpenClaw Voice Bot
 After=network.target
@@ -5,9 +8,9 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/workspace/openclaw-voice
-EnvironmentFile=/workspace/openclaw-voice/.env
-ExecStart=/usr/bin/node /workspace/openclaw-voice/src/index.js
+WorkingDirectory=%h/openclaw-voice
+EnvironmentFile=%h/openclaw-voice/.env
+ExecStart=/usr/bin/node %h/openclaw-voice/src/index.js
 Restart=always
 RestartSec=10
 
