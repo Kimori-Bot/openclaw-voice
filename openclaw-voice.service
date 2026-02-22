@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenClaw Voice Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/workspace/openclaw-voice
+EnvironmentFile=/workspace/openclaw-voice/.env
+ExecStart=/usr/bin/node /workspace/openclaw-voice/src/index.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

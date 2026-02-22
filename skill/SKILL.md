@@ -49,14 +49,12 @@ cd openclaw-voice
 npm install
 ```
 
-### 2. Start Whisper Server
+### 2. Configure .env
 
 ```bash
-# Start in background
-python3 /workspace/whisper-server.py &
+cp .env.example .env
+# Edit .env with your settings
 ```
-
-### 3. Configure .env
 
 ```env
 # Discord
@@ -68,17 +66,43 @@ OPENCLAW_API=http://localhost:18789
 OPENCLAW_GATEWAY_PASSWORD=your_gateway_password
 
 # Voice Settings  
-WAKE_WORD=kimori          # Wake word to trigger response
-ALWAYS_RESPOND=false      # If true, respond to everything
-RESPONSE_MODE=ai          # "ai" = AI, "echo" = repeat speech
+WAKE_WORD=echo              # Wake word (comma-separated: echo,kimori)
+ALWAYS_RESPOND=false        # If true, respond to everything
+RESPONSE_MODE=ai            # "ai" = AI, "echo" = repeat speech
+WHISPER_MODEL=medium       # tiny, base, small, medium, large
+WHISPER_AUTOSTART=true     # Auto-start whisper server
 DISCORD_CHANNEL_ID=        # Optional: specific channel for AI
 ```
 
-### 4. Run
+### 3. Run
 
+**Option A: Direct**
 ```bash
 node src/index.js
 ```
+
+**Option B: Systemd Service (recommended for production)**
+```bash
+# Copy service file
+sudo cp openclaw-voice.service /etc/systemd/system/
+
+# Edit path in service file if different
+sudo nano /etc/systemd/system/openclaw-voice.service
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable openclaw-voice
+sudo systemctl start openclaw-voice
+
+# Check status
+sudo systemctl status openclaw-voice
+
+# Restart after updates
+sudo systemctl restart openclaw-voice
+```
+
+**Option C: Auto-start with bot (default)**
+The bot will auto-start the whisper server if `WHISPER_AUTOSTART=true` (default).
 
 ## Commands
 
