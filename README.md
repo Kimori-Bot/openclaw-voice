@@ -1,58 +1,101 @@
 # OpenClaw Voice
 
-A flexible Discord voice channel bot for OpenClaw - plays music, streams audio, and can be triggered by OpenClaw to send voice notifications.
+A flexible Discord voice channel bot for OpenClaw - plays music, streams audio, and transcribes voice in real-time.
+
+## Architecture
+
+- **Bot**: Node.js (discord.js + @discordjs/voice)
+- **STT**: FasterWhisper (local, real-time streaming with VAD)
+- **TTS**: ElevenLabs (or gTTS fallback)
 
 ## Features
 
 - **Music Streaming**: Play YouTube audio in voice channels
-- **Voice Notifications**: OpenClaw can trigger voice announcements (builds complete, reminders, etc.)
-- **Configurable Bot Name**: Works with any bot name (not Kimori-specific)
-- **Native Commands**: Full Discord slash command support
+- **Voice Conversation**: AI-powered voice chat with wake word detection
+- **Real-time Transcription**: Local whisper with VAD (no cloud costs)
+- **Slash Commands**: Full Discord command support
 
 ## Quick Start
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Install Node dependencies
+npm install
 
 # Configure
 cp .env.example .env
 # Edit .env with your bot token and settings
 
-# Run
-python3 bot.py
+# Start whisper server (required for STT)
+python3 whisper-server.py &
+
+# Start the bot
+node src/index.js
 ```
 
 ## Configuration (.env)
 
 ```env
 DISCORD_BOT_TOKEN=your_token_here
-BOT_NAME=OpenClaw
-DEFAULT_VOLUME=0.8
+TTS_ENGINE=elevenlabs
+STT_ENGINE=local
+WHISPER_MODEL=tiny
+ELEVENLABS_API_KEY=your_key
 ```
 
 ## Commands
 
 - `/play <query>` - Play YouTube audio
+- `/search <query>` - AI-powered song search
+- `/stream <url>` - Play from direct URL
+- `/queue` - Show queue
+- `/skip` - Skip song
 - `/stop` - Stop playback
-- `/join` - Join your voice channel
+- `/join` - Join voice channel
 - `/leave` - Leave voice channel
+- `/listen` - Start voice conversation
+- `/say <text>` - Text to speech
 
-## OpenClaw Integration
+## STT Options
 
-Trigger voice notifications from OpenClaw:
+### Local (FasterWhisper) - Default
+- Uses tiny model for speed
+- Real-time streaming with VAD
+- No API costs
+
+### ElevenLabs Scribe
+- Set `STT_ENGINE=elevenlabs`
+- Higher accuracy but uses API credits
+
+## TTS Options
+
+### ElevenLabs (Default)
+- Set `TTS_ENGINE=elevenlabs`
+- Natural voice output
+
+### gTTS (Fallback)
+- Set `TTS_ENGINE=local`
+- Free, Google TTS
+
+## API
 
 ```bash
-curl -X POST http://localhost:5000/notify \
+# Health check
+curl http://localhost:5000/health
+
+# Join voice
+curl -X POST http://localhost:5000/join \
   -H "Content-Type: application/json" \
-  -d '{"message": "Kevin, your build is done!", "channel_id": "123456789"}'
-```
+  -d '{"guild_id": "123", "channel_id": "456"}'
 
-## Docker
+# Play audio
+curl -X POST http://localhost:5000/play \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/audio.mp3", "guild_id": "123"}'
 
-```bash
-docker build -t openclaw-voice .
-docker run -d --env-file .env openclaw-voice
+# Whisper transcription
+curl -X POST http://127.0.0.1:5001/transcribe \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/path/to/audio.wav"}'
 ```
 
 ## License
