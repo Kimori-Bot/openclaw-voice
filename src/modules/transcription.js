@@ -19,12 +19,12 @@ class TranscriptionManager {
     }
     
     // ====================
-    // TRANSCRIPTION
+    // TRANSCRIPTION - Direct binary (fastest, no HTTP overhead)
     // ====================
     async transcribe(audioPath) {
         // Check cache
         const cached = this.transcriptionCache.get(audioPath);
-        if (cached && Date.now() - cached.timestamp < 300000) { // 5 min cache
+        if (cached && Date.now() - cached.timestamp < 300000) {
             return cached.text;
         }
         
@@ -54,30 +54,18 @@ class TranscriptionManager {
             }
         }
         
-        // Try whisper.cpp server (fastest - direct C++ implementation)
+        // Try whisper.cpp CLI directly (fastest - no HTTP overhead)
         try {
-            const FormData = require('form-data');
-            const form = new FormData();
-            form.append('file', fs.createReadStream(audioPath));
-            form.append('response_format', 'text');
-            
-            const response = await fetch(this.config.WHISPER_SERVER + '/inference', {
-                method: 'POST',
-                body: form,
-                signal: AbortSignal.timeout(15000)
-            });
-            
-            if (response.ok) {
-                const text = await response.text();
-                const cleaned = text.replace(/["\n]/g, ' ').trim();
-                this.transcriptionCache.set(audioPath, { text: cleaned, timestamp: Date.now() });
-                return cleaned;
+            const result = await this.transcribeWithWhisperCpp(audioPath);
+            if (result) {
+                this.transcriptionCache.set(audioPath, { text: result, timestamp: Date.now() });
+                return result;
             }
         } catch(e) {
-            this.logger.debug(`Whisper.cpp error: ${e.message}`);
+            this.logger.debug(`Whisper.cpp CLI error: ${e.message}`);
         }
         
-        // Fallback to FasterWhisper HTTP server
+        // Fallback to HTTP server
         try {
             const response = await fetch(this.config.WHISPER_SERVER + '/transcribe', {
                 method: 'POST',
@@ -96,6 +84,52 @@ class TranscriptionManager {
         }
         
         return '';
+    }
+    
+    // Direct whisper.cpp binary - fastest possible
+    async transcribeWithWhisperCpp(audioPath) {
+        return new Promise((resolve, reject) => {
+            const outputFile = `/tmp/whisper-${Date.now()}.txt`;
+            
+            const proc = spawn('whisper-cli', [
+                '-m', '/root/.whisper/ggml-tiny.bin',
+                '-f', audioPath,
+                '-otxt',           // output text file
+                '-of', outputFile.replace('.txt', ''),  // output file path (without ext)
+                '-t', '2',         // 2 threads for speed
+                '-l', 'en',        // English
+            ], { stdio: ['ignore', 'pipe', 'pipe'] });
+            
+            let stderr = '';
+            
+            proc.stderr.on('data', (data) => { stderr += data.toString(); });
+            
+            proc.on('close', (code) => {
+                // Read output file
+                try {
+                    if (fs.existsSync(outputFile)) {
+                        const text = fs.readFileSync(outputFile, 'utf8').trim();
+                        fs.unlinkSync(outputFile);
+                        if (text) resolve(text);
+                        else reject(new Error('No transcription output'));
+                    } else {
+                        reject(new Error('No output file created'));
+                    }
+                } catch(e) {
+                    reject(e);
+                }
+            });
+            
+            proc.on('error', (err) => {
+                reject(err);
+            });
+            
+            // Timeout
+            setTimeout(() => {
+                proc.kill();
+                reject(new Error('whisper-cli timeout'));
+            }, 15000);
+        });
     }
     
     // ====================
