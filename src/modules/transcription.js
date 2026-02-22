@@ -54,7 +54,30 @@ class TranscriptionManager {
             }
         }
         
-        // Try whisper server
+        // Try whisper.cpp server (fastest - direct C++ implementation)
+        try {
+            const FormData = require('form-data');
+            const form = new FormData();
+            form.append('file', fs.createReadStream(audioPath));
+            form.append('response_format', 'text');
+            
+            const response = await fetch(this.config.WHISPER_SERVER + '/inference', {
+                method: 'POST',
+                body: form,
+                signal: AbortSignal.timeout(15000)
+            });
+            
+            if (response.ok) {
+                const text = await response.text();
+                const cleaned = text.replace(/["\n]/g, ' ').trim();
+                this.transcriptionCache.set(audioPath, { text: cleaned, timestamp: Date.now() });
+                return cleaned;
+            }
+        } catch(e) {
+            this.logger.debug(`Whisper.cpp error: ${e.message}`);
+        }
+        
+        // Fallback to FasterWhisper HTTP server
         try {
             const response = await fetch(this.config.WHISPER_SERVER + '/transcribe', {
                 method: 'POST',
@@ -69,7 +92,7 @@ class TranscriptionManager {
                 return result.text;
             }
         } catch(e) {
-            this.logger.debug(`Whisper server error: ${e.message}`);
+            this.logger.debug(`FasterWhisper fallback error: ${e.message}`);
         }
         
         return '';
