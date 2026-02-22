@@ -60,6 +60,7 @@ const config = {
     OPENCLAW_API: process.env.OPENCLAW_API || 'http://localhost:8080',
     WHISPER_SERVER: process.env.WHISPER_SERVER || 'http://127.0.0.1:5001',
     WHISPER_AUTOSTART: process.env.WHISPER_AUTOSTART !== 'false',
+    WHISPER_MODEL: process.env.WHISPER_MODEL || 'small',
     SILENCE_THRESHOLD_MS: 1500,
     WAKE_WORD: process.env.WAKE_WORD || 'echo',
     // Parse comma-separated wake words into array
@@ -91,9 +92,11 @@ async function startWhisperServer() {
     
     if (fs.existsSync(whisperPath)) {
         console.log('📝 Starting whisper server...');
+        const env = { ...process.env, WHISPER_MODEL: config.WHISPER_MODEL };
         require('child_process').spawn('python3', [whisperPath], {
             detached: true,
-            stdio: 'ignore'
+            stdio: 'ignore',
+            env
         }).unref();
         
         // Wait for server to start

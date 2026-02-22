@@ -17,10 +17,13 @@ if venv_path.exists():
 from faster_whisper import WhisperModel
 from aiohttp import web
 
-# Load model (tiny for speed, can upgrade to base/small)
-print("Loading Whisper model...")
-model = WhisperModel("small", device="cpu", compute_type="int8")
-print("Model loaded!")
+import os
+
+# Load model - configurable via WHISPER_MODEL env (tiny, base, small, medium, large)
+model_size = os.environ.get('WHISPER_MODEL', 'small')
+print(f"Loading Whisper model: {model_size}...")
+model = WhisperModel(model_size, device="cpu", compute_type="int8")
+print(f"Model loaded: {model_size}!")
 
 transcription_buffer = {}  # guildId -> {"text": "", "last_update": timestamp}
 
