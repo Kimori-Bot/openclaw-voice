@@ -71,6 +71,9 @@ const config = {
     ELEVENLABS_MODEL: process.env.ELEVENLABS_MODEL || 'eleven_monolingual_v1',
     ELEVENLABS_STABILITY: process.env.ELEVENLABS_STABILITY || 0.5,
     ELEVENLABS_SIMILARITY: process.env.ELEVENLABS_SIMILARITY || 0.75,
+    // Wake word
+    WAKE_WORD: process.env.WAKE_WORD || 'echo',
+    WAKE_WORDS: (process.env.WAKE_WORD || 'echo').split(',').map(w => w.trim().toLowerCase()).filter(Boolean),
     RESPONSE_MODE: process.env.RESPONSE_MODE || 'ai', // 'ai' = respond with AI, 'echo' = just repeat
     ALWAYS_RESPOND: process.env.ALWAYS_RESPOND === 'true',
 };
