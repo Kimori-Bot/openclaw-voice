@@ -60,7 +60,7 @@ const config = {
     OPENCLAW_API: process.env.OPENCLAW_API || 'http://localhost:8080',
     WHISPER_SERVER: process.env.WHISPER_SERVER || 'http://127.0.0.1:5001',
     WHISPER_AUTOSTART: process.env.WHISPER_AUTOSTART !== 'false',
-    WHISPER_MODEL: process.env.WHISPER_MODEL || 'small',
+    WHISPER_MODEL: process.env.WHISPER_MODEL || 'medium',
     SILENCE_THRESHOLD_MS: 1500,
     WAKE_WORD: process.env.WAKE_WORD || 'echo',
     // Parse comma-separated wake words into array
