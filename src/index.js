@@ -453,7 +453,7 @@ async function speak(text, guildId) {
 // Store conversation history per guild for context
 const conversationHistory = new Map(); // guildId -> [{role, content}]
 
-async function sendToOpenClaw(text, guildId, voiceChannelId) {
+async function sendToOpenClaw(text, guildId) {
     // Get or initialize conversation history for this guild
     if (!conversationHistory.has(guildId)) {
         // Build initial context
@@ -500,13 +500,12 @@ async function sendToOpenClaw(text, guildId, voiceChannelId) {
     }
     
     // Use openclaw agent CLI for session-based responses
-    // Use voice channel ID for unique session context per voice channel
-    const sessionLabel = `discord:voice-${guildId}-${voiceChannelId}`;
+    // Use guild ID for session context
     return new Promise((resolve) => {
         const proc = spawn('openclaw', [
             'agent',
             '--channel', 'discord',
-            '--session-id', sessionLabel,
+            '--session-id', guildId.toString(),
             '--message', text,
             '--timeout', '30'
         ], {
@@ -710,9 +709,7 @@ async function processVoiceAudio(guildId, audioBuffer, userId) {
 
             console.log(`📝 Sending to AI: "${cleanText}"`);
 
-            // Get voice channel ID for session isolation
-            const voiceChannelId = voiceConnections.get(guildId)?.channelId || 'general';
-            const response = await sendToOpenClaw(cleanText, guildId, voiceChannelId);
+            const response = await sendToOpenClaw(cleanText, guildId);
             console.log(`🤖 AI response: ${response.substring(0, 100)}...`);
 
             // Speak the response
