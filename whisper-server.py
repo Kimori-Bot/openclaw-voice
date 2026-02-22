@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
 Whisper transcription server for OpenClaw Voice Bot
-Listens on localhost:5001 for audio files and returns transcribed text
+Supports both file-based and streaming transcription for real-time processing
 """
 import sys
 import os
-import json
 import asyncio
 from pathlib import Path
 
@@ -16,24 +15,22 @@ if venv_path.exists():
 
 from faster_whisper import WhisperModel
 from aiohttp import web
+import asyncio
+import queue
+import threading
 
-import os
-
-# Load model - configurable via WHISPER_MODEL env (tiny, base, small, medium, large)
-model_size = os.environ.get('WHISPER_MODEL', 'small')
+# Load model - tiny is fastest for real-time
+model_size = os.environ.get('WHISPER_MODEL', 'tiny')
 print(f"Loading Whisper model: {model_size}...")
 model = WhisperModel(model_size, device="cpu", compute_type="int8")
 print(f"Model loaded: {model_size}!")
 
-transcription_buffer = {}  # guildId -> {"text": "", "last_update": timestamp}
+# Streaming transcription state
+stream_state = {}  # stream_id -> {"segments": [], "processing": False}
 
 async def transcribe_handler(request):
-    """Receive audio data and transcribe"""
+    """File-based transcription (legacy)"""
     data = await request.json()
-    guild_id = data.get("guild_id", "default")
-    audio_data = data.get("audio")  # base64 encoded audio
-    
-    # For now, handle file path if provided
     audio_path = data.get("path")
     
     try:
@@ -41,67 +38,96 @@ async def transcribe_handler(request):
             segments, info = model.transcribe(audio_path, language="en")
             text = " ".join([s.text for s in segments])
             return web.json_response({"text": text, "language": info.language})
-        else:
-            return web.json_response({"text": "", "error": "No audio provided"})
+        return web.json_response({"text": "", "error": "No audio provided"})
     except Exception as e:
         return web.json_response({"text": "", "error": str(e)})
 
-async def buffer_text_handler(request):
-    """Add text to buffer and check if sentence is complete"""
+async def stream_start_handler(request):
+    """Start a new streaming transcription"""
     data = await request.json()
-    guild_id = data.get("guild_id", "default")
-    new_text = data.get("text", "")
-    silence_threshold_ms = data.get("silence_threshold", 1500)  # 1.5 seconds default
+    stream_id = data.get("stream_id", "default")
     
-    current_time = asyncio.get_event_loop().time()
+    stream_state[stream_id] = {
+        "segments": [],
+        "text": "",
+        "processing": False
+    }
     
-    if guild_id not in transcription_buffer:
-        transcription_buffer[guild_id] = {"text": "", "last_update": 0, "sent_to_ai": False}
+    return web.json_response({"status": "started", "stream_id": stream_id})
+
+async def stream_audio_handler(request):
+    """Add audio chunks to stream and get partial results"""
+    data = await request.json()
+    stream_id = data.get("stream_id", "default")
+    audio_base64 = data.get("audio")  # base64 encoded audio chunk
     
-    buffer = transcription_buffer[guild_id]
-    time_since_update = (current_time - buffer["last_update"]) * 1000
+    if stream_id not in stream_state:
+        return web.json_response({"error": "Stream not started"}, status=400)
     
-    # If been silent long enough and there's text, mark as ready
-    if time_since_update > silence_threshold_ms and buffer["text"].strip():
-        buffer["sent_to_ai"] = True
+    # For now, accumulate chunks and transcribe when we have enough
+    # True streaming would require more complex buffer management
+    state = stream_state[stream_id]
     
-    # Update buffer with new text
-    if new_text:
-        buffer["text"] = buffer["text"] + " " + new_text if buffer["text"] else new_text
-        buffer["sent_to_ai"] = False
-    
-    buffer["last_update"] = current_time
+    # Decode base64 audio (simple approach - could optimize)
+    if audio_base64:
+        import base64
+        audio_bytes = base64.b64decode(audio_base64)
+        
+        # Save to temp file
+        temp_file = f"/tmp/stream_{stream_id}_{asyncio.get_event_loop().time()}.wav"
+        with open(temp_file, 'wb') as f:
+            f.write(audio_bytes)
+        
+        # Transcribe
+        try:
+            segments, info = model.transcribe(temp_file, language="en", 
+                                              beam_size=1,  # Faster
+                                              vad_filter=True)  # Voice activity detection
+            text = " ".join([s.text for s in segments])
+            state["text"] = text
+            os.unlink(temp_file)
+        except Exception as e:
+            return web.json_response({"text": "", "error": str(e)})
     
     return web.json_response({
-        "buffer": buffer["text"],
-        "ready": buffer["sent_to_ai"],
-        "silence_ms": time_since_update
+        "text": state["text"],
+        "stream_id": stream_id
     })
 
-async def get_buffer_handler(request):
-    """Get current buffer and optionally clear it"""
-    guild_id = request.query.get("guild_id", "default")
-    clear = request.query.get("clear", "false").lower() == "true"
+async def stream_result_handler(request):
+    """Get current transcription result"""
+    stream_id = request.query.get("stream_id", "default")
     
-    buffer = transcription_buffer.get(guild_id, {"text": "", "last_update": 0, "sent_to_ai": False})
+    if stream_id in stream_state:
+        return web.json_response({
+            "text": stream_state[stream_id]["text"],
+            "stream_id": stream_id
+        })
+    return web.json_response({"text": ""})
+
+async def stream_end_handler(request):
+    """End streaming transcription"""
+    data = await request.json()
+    stream_id = data.get("stream_id", "default")
     
-    if clear:
-        transcription_buffer[guild_id] = {"text": "", "last_update": 0, "sent_to_ai": False}
+    if stream_id in stream_state:
+        final_text = stream_state[stream_id]["text"]
+        del stream_state[stream_id]
+        return web.json_response({"text": final_text})
     
-    return web.json_response({
-        "buffer": buffer["text"],
-        "sent_to_ai": buffer["sent_to_ai"]
-    })
+    return web.json_response({"text": ""})
 
 async def index(request):
-    return web.Response(text="Whisper transcription service running")
+    return web.Response(text="Whisper transcription service running (streaming supported)")
 
 app = web.Application()
 app.router.add_get("/", index)
 app.router.add_post("/transcribe", transcribe_handler)
-app.router.add_post("/buffer", buffer_text_handler)
-app.router.add_get("/buffer", get_buffer_handler)
+app.router.add_post("/stream/start", stream_start_handler)
+app.router.add_post("/stream/audio", stream_audio_handler)
+app.router.add_get("/stream/result", stream_result_handler)
+app.router.add_post("/stream/end", stream_end_handler)
 
 if __name__ == "__main__":
-    print("Starting Whisper server on port 5001...")
+    print("Starting Whisper server on port 5001 (streaming enabled)...")
     web.run_app(app, host="127.0.0.1", port=5001)
