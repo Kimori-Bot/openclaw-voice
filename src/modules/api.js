@@ -38,7 +38,15 @@ function createApiServer(app, deps) {
             }
             
             const channel = guild.channels.cache.get(targetChannel);
-            const vc = await voiceManager.join(guild_id, channel, guild.voiceAdapterCreator);
+            const deps = req.app.get('deps');
+            const transcriptionManager = deps?.transcriptionManager;
+            
+            const vc = await voiceManager.join(guild_id, channel, guild.voiceAdapterCreator,
+                (guildId, audioBuffer, userId) => {
+                    if (transcriptionManager) {
+                        transcriptionManager.processVoiceAudio(guildId, audioBuffer, userId);
+                    }
+                });
             
             res.json({ status: 'joined', channel_id: targetChannel });
         } catch (e) {

@@ -91,9 +91,14 @@ client.on('voiceStateUpdate', (oldState, newState) => {
     // Handle voice state changes
     if (oldState.channelId && !newState.channelId && oldState.id === client.user.id) {
         const guildId = oldState.guild.id;
-        logger.info(`👋 Left voice channel in ${guildId}`);
+        logger.info(`👋 Bot left voice channel in ${guildId}`);
         voiceManager.cleanup(guildId);
         musicManager.clearQueue(guildId);
+    }
+    
+    // Debug: log all voice state changes
+    if (oldState.channelId !== newState.channelId) {
+        logger.info(`🔊 Voice state: ${oldState.member?.user?.username} moved from ${oldState.channelId} to ${newState.channelId}`);
     }
 });
 
@@ -103,14 +108,31 @@ client.on('interactionCreate', async (interaction) => {
     const guildId = interaction.guildId;
     const vc = voiceManager.get(guildId);
     
-    await handleInteraction(interaction, {
-        config,
-        client,
-        voiceManager,
-        musicManager,
-        transcriptionManager,
-        logger
-    });
+    try {
+        await handleInteraction(interaction, {
+            config,
+            client,
+            voiceManager,
+            musicManager,
+            transcriptionManager,
+            logger
+        });
+    } catch (err) {
+        logger.error('Interaction error:', err.message);
+        // Try to respond with error if interaction still valid
+        if (err.message?.includes('Unknown interaction')) {
+            return; // Interaction timed out, ignore
+        }
+        try {
+            if (interaction.deferred) {
+                await interaction.editReply(`❌ Error: ${err.message}`);
+            } else {
+                await interaction.reply(`❌ Error: ${err.message}`);
+            }
+        } catch (e) {
+            // Interaction fully timed out
+        }
+    }
 });
 
 // Auto-join on message
@@ -124,7 +146,10 @@ client.on('messageCreate', async (message) => {
     // Auto-join
     if (voiceChannel && !voiceManager.has(guildId)) {
         try {
-            await voiceManager.join(guildId, voiceChannel, message.guild.voiceAdapterCreator);
+            await voiceManager.join(guildId, voiceChannel, message.guild.voiceAdapterCreator, 
+                (guildId, audioBuffer, userId) => {
+                    transcriptionManager.processVoiceAudio(guildId, audioBuffer, userId);
+                });
             await message.reply('🎤 Joined your voice channel!');
         } catch (e) {
             logger.error('Auto-join error:', e);
@@ -140,7 +165,7 @@ logger.info('🎤 Voice bot ready');
 // Start API server
 const app = express();
 app.use(express.json());
-createApiServer(app, { client, voiceManager, musicManager, logger });
+createApiServer(app, { client, voiceManager, musicManager, transcriptionManager, logger });
 app.listen(5000, () => logger.info('📢 API running on port 5000'));
 
 client.login(config.TOKEN);

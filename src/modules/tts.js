@@ -2,7 +2,7 @@
  * TTS Module - Text to Speech with caching
  */
 const { spawn } = require('child_process');
-const { createAudioResource } = require('@discordjs/voice');
+const { createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const fs = require('fs');
 
 const ttsCache = new Map(); // text hash -> audio buffer

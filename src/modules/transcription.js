@@ -56,17 +56,19 @@ class TranscriptionManager {
         
         // Try whisper.cpp CLI directly (fastest - no HTTP overhead)
         try {
+            this.logger.info(`📝 Trying whisper.cpp`);
             const result = await this.transcribeWithWhisperCpp(audioPath);
             if (result) {
                 this.transcriptionCache.set(audioPath, { text: result, timestamp: Date.now() });
                 return result;
             }
         } catch(e) {
-            this.logger.debug(`Whisper.cpp CLI error: ${e.message}`);
+            this.logger.info(`Whisper.cpp CLI error: ${e.message}`);
         }
         
         // Fallback to HTTP server
         try {
+            this.logger.info(`📝 Trying FasterWhisper HTTP`);
             const response = await fetch(this.config.WHISPER_SERVER + '/transcribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -89,33 +91,44 @@ class TranscriptionManager {
     // Direct whisper.cpp binary - fastest possible
     async transcribeWithWhisperCpp(audioPath) {
         return new Promise((resolve, reject) => {
-            const outputFile = `/tmp/whisper-${Date.now()}.txt`;
+            const timestamp = Date.now();
+            const outputFile = `/tmp/whisper-${timestamp}.txt`;
+            
+            this.logger.info(`📝 Running whisper on: ${audioPath}`);
             
             const proc = spawn('whisper-cli', [
                 '-m', '/root/.whisper/ggml-tiny.bin',
                 '-f', audioPath,
-                '-otxt',           // output text file
-                '-of', outputFile.replace('.txt', ''),  // output file path (without ext)
-                '-t', '2',         // 2 threads for speed
-                '-l', 'en',        // English
+                '-otxt',
+                '-of', `/tmp/whisper-${timestamp}`,
+                '-t', '4',
+                '-nth', '0.01',  // Lower no-speech threshold
+                '-vt', '0.1'     // Lower VAD threshold
             ], { stdio: ['ignore', 'pipe', 'pipe'] });
             
             let stderr = '';
             
-            proc.stderr.on('data', (data) => { stderr += data.toString(); });
+            proc.stderr.on('data', (data) => { 
+                stderr += data.toString(); 
+                this.logger.info(`📝 whisper stderr: ${data.toString().substring(0, 100)}`);
+            });
             
             proc.on('close', (code) => {
+                this.logger.info(`📝 whisper exited code: ${code}`);
                 // Read output file
                 try {
                     if (fs.existsSync(outputFile)) {
                         const text = fs.readFileSync(outputFile, 'utf8').trim();
                         fs.unlinkSync(outputFile);
+                        this.logger.info(`📝 whisper output: "${text}"`);
                         if (text) resolve(text);
                         else reject(new Error('No transcription output'));
                     } else {
+                        this.logger.info(`📝 whisper output file not found: ${outputFile}`);
                         reject(new Error('No output file created'));
                     }
                 } catch(e) {
+                    this.logger.info(`📝 whisper error: ${e.message}`);
                     reject(e);
                 }
             });
@@ -136,12 +149,24 @@ class TranscriptionManager {
     // AUDIO PROCESSING
     // ====================
     async processVoiceAudio(guildId, audioBuffer, userId) {
+        this.logger.info(`📥 processVoiceAudio called: ${audioBuffer?.length || 0} bytes`);
+        
         const vc = this.voiceManager.get(guildId);
-        if (!vc?.isListening) return;
+        this.logger.info(`📥 VC state: ${vc ? 'exists' : 'null'}, isListening: ${vc?.isListening}`);
         
-        if (!audioBuffer || audioBuffer.length < 2000) return;
+        if (!vc?.isListening) {
+            this.logger.info(`📥 Skipping - not in listening mode`);
+            return;
+        }
         
-        // Save to temp file
+        if (!audioBuffer || audioBuffer.length < 100) {
+            this.logger.info(`📥 Skipping - audio too small (${audioBuffer?.length || 0} bytes)`);
+            return;
+        }
+        
+        // Audio is already decoded to PCM by voice.js using @discordjs/opus
+        // Just convert sample rate for whisper
+        const fs = require('fs');
         const tempDir = '/tmp/openclaw-audio';
         if (!fs.existsSync(tempDir)) {
             fs.mkdirSync(tempDir, { recursive: true });
@@ -152,26 +177,48 @@ class TranscriptionManager {
         
         fs.writeFileSync(pcmFile, audioBuffer);
         
-        // Convert to WAV
+        this.logger.info(`📝 PCM file: ${pcmFile}, size: ${audioBuffer.length}`);
+        
+        // Convert to WAV for whisper with voice enhancement
         await new Promise((resolve) => {
             const ff = spawn('ffmpeg', [
                 '-f', 's16le', '-ar', '48000', '-ac', '2',
                 '-i', pcmFile,
-                '-af', 'volume=4',
+                '-ar', '16000',
+                '-ac', '1',
+                // More aggressive voice band filter + noise gate + boost
+                '-af', 'highpass=f=80,lowpass=f=7500,volume=4,compand=attacks=0:points=-80/-80|-6/-6|0/-3|6/0',
                 '-y', wavFile
             ]);
-            ff.on('close', () => {
+            
+            ff.on('close', (code) => {
+                this.logger.info(`📝 ffmpeg exit code: ${code}`);
                 try { fs.unlinkSync(pcmFile); } catch(e) {}
                 resolve();
             });
-            ff.on('error', () => resolve());
+            ff.on('error', (e) => {
+                this.logger.info(`📝 ffmpeg error: ${e.message}`);
+                resolve();
+            });
         });
         
         // Transcribe
-        const text = await this.transcribe(wavFile);
-        try { fs.unlinkSync(wavFile); } catch(e) {}
+        this.logger.info(`📝 Starting transcription for ${wavFile}`);
+        let text = await this.transcribe(wavFile);
         
-        if (!text) return;
+        // Clean up noise markers from whisper
+        text = text.replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
+        
+        this.logger.info(`📝 Transcription result: "${text}"`);
+        
+        // Keep file for debugging if transcription failed
+        if (!text) {
+            const debugName = wavFile.replace('/tmp/', '/tmp/debug-');
+            try { fs.renameSync(wavFile, debugName); } catch(e) {}
+            this.logger.info(`📝 Saved debug file: ${debugName}`);
+        } else {
+            try { fs.unlinkSync(wavFile); } catch(e) {}
+        }
         
         // Update buffer
         this.updateBuffer(guildId, text);
@@ -214,16 +261,16 @@ class TranscriptionManager {
             return;
         }
         
-        // Check wake word
-        const normalized = text.toLowerCase().replace(/^[,\.\s]+|[,\.\s]+$/g, '');
+        // Check wake word - strip all punctuation
+        const normalized = text.toLowerCase().replace(/[,\.\s]+/g, ' ').trim();
         const hasWakeWord = this.wakeWords.some(w => 
             normalized.includes(w) || 
-('            normalized.startsWithhey ' + w) ||
+            normalized.startsWith('hey ' + w) ||
             normalized.startsWith('okay ' + w)
         );
         
         if (!this.config.ALWAYS_RESPOND && !hasWakeWord) {
-            this.logger.debug(`No wake word: "${text}"`);
+            this.logger.info(`No wake word: "${text}"`);
             state.processing = false;
             return;
         }

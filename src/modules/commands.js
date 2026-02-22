@@ -26,6 +26,8 @@ const commands = [
     new SlashCommandBuilder().setName('clear').setDescription('Clear queue'),
     new SlashCommandBuilder().setName('listen').setDescription('Start voice conversation'),
     new SlashCommandBuilder().setName('stop_listen').setDescription('Stop listening'),
+    new SlashCommandBuilder().setName('record').setDescription('Start recording audio to file'),
+    new SlashCommandBuilder().setName('stop_record').setDescription('Stop recording and save file'),
     new SlashCommandBuilder()
         .setName('say')
         .setDescription('Speak text')
@@ -57,7 +59,10 @@ async function handleInteraction(interaction, deps) {
         }
         
         try {
-            vc = await voiceManager.join(guildId, member.voice.channel, guild.voiceAdapterCreator);
+            vc = await voiceManager.join(guildId, member.voice.channel, guild.voiceAdapterCreator, 
+                (guildId, audioBuffer, userId) => {
+                    transcriptionManager.processVoiceAudio(guildId, audioBuffer, userId);
+                });
             await interaction.editReply('🎤 Joined!');
             return vc;
         } catch (e) {
@@ -162,6 +167,36 @@ async function handleInteraction(interaction, deps) {
         case 'stop_listen':
             voiceManager.setListening(guildId, false);
             await interaction.reply('🛑 Stopped listening.');
+            break;
+            
+        case 'record':
+            if (voiceManager.has(guildId)) {
+                voiceManager.setRecording(guildId, true);
+                await interaction.reply('🔴 Recording started! Use /stop_record to stop.');
+            } else {
+                await interaction.reply('❌ Join voice first!');
+            }
+            break;
+            
+        case 'stop_record':
+            if (voiceManager.has(guildId)) {
+                await interaction.deferReply();
+                const filePath = voiceManager.setRecording(guildId, false);
+                
+                // Wait for file to be ready
+                await new Promise(r => setTimeout(r, 1500));
+                
+                if (filePath) {
+                    await interaction.editReply({ 
+                        content: `💾 Recording saved!`,
+                        files: [filePath]
+                    });
+                } else {
+                    await interaction.editReply('❌ No recording to save.');
+                }
+            } else {
+                await interaction.reply('❌ Not in voice!');
+            }
             break;
             
         case 'say':

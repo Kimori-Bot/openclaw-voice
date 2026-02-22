@@ -1,41 +1,41 @@
 ---
 name: openclaw-voice
-description: Discord voice bot with FasterWhisper transcription, OpenClaw AI integration via agent CLI, TTS, and wake word detection.
+description: Discord voice bot with whisper.cpp transcription, OpenClaw AI integration, gTTS, and wake word detection.
 metadata:
   openclaw:
     emoji: "🎤"
     requires:
-      bins: ["node", "npm", "ffmpeg", "python3"]
-      npm: ["discord.js", "@discordjs/voice", "express"]
-      pip: ["faster-whisper", "aiohttp"]
+      bins: ["node", "npm", "ffmpeg"]
+      npm: ["discord.js", "@discordjs/voice", "express", "opusscript"]
 ---
 
 # OpenClaw Voice
 
-Discord voice bot with voice transcription, AI conversation via OpenClaw, and TTS. Uses local FasterWhisper for transcription and OpenClaw agent CLI for context-aware responses.
+Discord voice bot with voice transcription, AI conversation via OpenClaw, and gTTS. Uses whisper.cpp CLI for local transcription and OpenClaw agent CLI for context-aware responses.
 
 ## Architecture
 
 ```
 User speaks in voice
-  → Discord speaking events (VAD)
-  → Capture audio → FasterWhisper transcription
+  → Discord speaking events
+  → Capture Opus audio → opusscript decode → PCM
+  → whisper.cpp CLI transcription
   → Check wake word (unless ALWAYS_RESPOND=true)
   → Send to OpenClaw via 'openclaw agent' CLI (session reuse = context!)
-  → Response → TTS → Play audio
+  → Response → gTTS → Play audio
 ```
 
 ## Key Features
 
 - **Session Reuse**: Uses `openclaw agent --channel discord --session-id <guildId>` for persistent context
 - **Wake Word Detection**: Only responds when wake word detected (configurable)
-- **Local Transcription**: FasterWhisper (no external API)
-- **No Emojis**: System prompt instructs AI to avoid emojis (don't translate well to speech)
-- **Auto-start**: Bot auto-starts whisper server (configurable)
+- **Local Transcription**: whisper.cpp CLI (no external API)
+- **Proper Opus Decoding**: Uses opusscript to decode Discord's Opus packets
+- **Recording**: Capture audio to files for debugging
 
 ## Platform Support
 
-This skill works on Linux, macOS, and Windows. See platform-specific instructions below.
+This skill works on Linux, macOS, and Windows.
 
 ## Setup
 
@@ -47,65 +47,55 @@ This skill works on Linux, macOS, and Windows. See platform-specific instruction
 - Node.js 18+
 - npm
 - ffmpeg
-- Python 3.8+
-- pip
 
 # Install Node dependencies
 cd openclaw-voice
 npm install
-
-# Install FasterWhisper
-pip install faster-whisper aiohttp
 ```
 
 **Linux (systemd):**
 ```bash
-# Install
+# Install service
 sudo cp openclaw-voice.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable openclaw-voice
 ```
 
-**macOS (launchd):**
+### 2. Download Whisper Model
+
 ```bash
-# Copy and edit plist
-cp openclaw-voice.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/openclaw-voice.plist
+mkdir -p ~/.whisper
+wget -O ~/.whisper/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
 ```
 
-**Windows (NSSM/Task Scheduler):**
-```bash
-# Using NSSM (Non-Sucking Service Manager)
-nssm install OpenClawVoice "C:\path\to\node.exe" "C:\path\to\openclaw-voice\src\index.js"
-# Or use Task Scheduler with: node C:\path\to\openclaw-voice\src\index.js
-```
-
-### 2. Configure .env
+### 3. Configure .env
 
 ```bash
 cp .env.example .env
-# Edit .env with your settings
 ```
 
 ```env
 # Discord
 DISCORD_BOT_TOKEN=your_discord_bot_token
-DISCORD_GUILD_ID=your_server_id
-
-# OpenClaw
-OPENCLAW_API=http://localhost:18789
-OPENCLAW_GATEWAY_PASSWORD=your_gateway_password
 
 # Voice Settings  
 WAKE_WORD=echo              # Wake word (comma-separated: echo,kimori)
 ALWAYS_RESPOND=false        # If true, respond to everything
-RESPONSE_MODE=ai            # "ai" = AI, "echo" = repeat speech
-WHISPER_MODEL=medium       # tiny, base, small, medium, large
-WHISPER_AUTOSTART=true    # Auto-start whisper server
-DISCORD_CHANNEL_ID=        # Optional: specific channel for AI
+
+# STT (whisper.cpp CLI)
+STT_ENGINE=local
+WHISPER_MODEL=tiny
+
+# TTS (gTTS is default)
+TTS_ENGINE=local
+
+# Optional: ElevenLabs for better TTS
+# TTS_ENGINE=elevenlabs
+# ELEVENLABS_API_KEY=your_key
+# ELEVENLABS_VOICE_ID=rachel
 ```
 
-### 3. Run
+### 4. Run
 
 **Linux (systemd):**
 ```bash
@@ -113,22 +103,9 @@ sudo systemctl start openclaw-voice
 sudo systemctl status openclaw-voice
 ```
 
-**Linux/macOS (direct):**
+**Direct:**
 ```bash
 node src/index.js
-# Or with pm2 for auto-restart
-pm2 start src/index.js --name openclaw-voice
-```
-
-**macOS (launchd):**
-```bash
-launchctl start openclaw-voice
-```
-
-**Windows:**
-```bash
-node src\index.js
-# Or run as service with NSSM
 ```
 
 ## Commands
@@ -143,53 +120,49 @@ node src\index.js
 | `/queue` | Show queue |
 | `/skip` | Skip song |
 | `/stop` | Stop and clear |
-| `/voice` | Start AI voice conversation |
+| `/listen` | Start voice conversation |
+| `/stop_listen` | Stop listening |
+| `/record` | Start recording |
+| `/stop_record` | Stop and save recording |
 | `/say [text]` | Speak text via TTS |
+| `/help` | Show help |
 
-## How Voice Conversation Works
+## Voice Conversation
 
-1. User says wake word + message in voice (e.g., "Echo, what's the weather?")
-2. Bot captures audio, transcribes with FasterWhisper
-3. Wake word detected → sends to OpenClaw
-4. OpenClaw processes via `openclaw agent` (reuses session per guild!)
-5. Response spoken via TTS
+1. Join a voice channel
+2. Use `/listen` to start transcription
+3. Say the wake word ("echo") followed by your message
+   - Example: "hey echo, what's the weather?"
+4. Bot will respond with TTS
 
-### Wake Word Variations
-- Configured WAKE_WORD (default: "echo")
-- "hey [wake]"
-- "okay [wake]"
-- "ok [wake]"
+### Wake Word
 
-### IMPORTANT: Music Control
+Default wake word is `echo`. Say "hey echo" or "okay echo" to trigger.
 
-The AI cannot directly control music. When users ask to play music:
-- AI responds: "Type /play [song name] in chat to play music"
-- Users must use slash commands in Discord text chat
+Wake word variations:
+- "echo" (the configured wake word)
+- "hey echo"
+- "okay echo"
 
-This is by design - the AI is a *helper* in voice, not the music bot controller.
+Set `ALWAYS_RESPOND=true` in .env to respond to all speech without wake word.
 
-## REST API
+## Recording
 
-```bash
-# Health
-curl http://localhost:5000/health
+Use `/record` to start capturing audio and `/stop_record` to save. Files are saved to `/tmp/openclaw-recordings/`.
 
-# Speak
-curl -X POST http://localhost:5000/speak \
-  -H "Content-Type: application/json" \
-  -d '{"guild_id": "123", "text": "Hello!"}'
-```
+Useful for debugging audio capture issues.
 
 ## Troubleshooting
 
 ```bash
-# Check whisper server
-curl -X POST http://localhost:5001/transcribe \
-  -H "Content-Type: application/json" \
-  -d '{"path": "/tmp/test.wav"}'
+# Check bot logs
+journalctl -u openclaw-voice -n 50
 
-# Check bot
-curl http://localhost:5000/health
+# Check recordings
+ls -la /tmp/openclaw-recordings/
+
+# Test whisper CLI
+whisper-cli -m ~/.whisper/ggml-tiny.bin -f /tmp/test.wav -otxt
 
 # Test OpenClaw
 openclaw agent --channel discord --session-id 123 --message "hello"
@@ -198,7 +171,7 @@ openclaw agent --channel discord --session-id 123 --message "hello"
 ## Files
 
 - Bot: `src/index.js`
-- Whisper server: `whisper-server.py`
+- Voice manager: `src/modules/voice.js`
+- Transcription: `src/modules/transcription.js`
 - Config: `.env`
-- Service (Linux): `openclaw-voice.service`
-- Service (macOS): `openclaw-voice.plist`
+- Service: `openclaw-voice.service`
