@@ -65,6 +65,9 @@ const config = {
     WAKE_WORD: process.env.WAKE_WORD || 'echo',
     // Parse comma-separated wake words into array
     WAKE_WORDS: (process.env.WAKE_WORD || 'echo').split(',').map(w => w.trim().toLowerCase()).filter(Boolean),
+    // Thinking words - played while waiting for AI response
+    THINKING_PHRASES: (process.env.THINKING_PHRASES || 'hmm,let me think,uh,um,okay,give me a moment').split(',').map(w => w.trim()),
+    THINKING_ENABLED: process.env.THINKING_ENABLED !== 'false',
     RESPONSE_MODE: process.env.RESPONSE_MODE || 'ai', // 'ai' = respond with AI, 'echo' = just repeat
     ALWAYS_RESPOND: process.env.ALWAYS_RESPOND === 'true',
 };
@@ -711,6 +714,12 @@ async function processVoiceAudio(guildId, audioBuffer, userId) {
             state.buffer = '';
 
             console.log(`📝 Sending to AI: "${cleanText}"`);
+
+            // Play random thinking phrase while waiting for AI
+            if (config.THINKING_ENABLED && config.THINKING_PHRASES.length > 0) {
+                const randomPhrase = config.THINKING_PHRASES[Math.floor(Math.random() * config.THINKING_PHRASES.length)];
+                speak(randomPhrase, guildId).catch(() => {}); // Don't await - play in background
+            }
 
             const response = await sendToOpenClaw(cleanText, guildId);
             console.log(`🤖 AI response: ${response.substring(0, 100)}...`);
