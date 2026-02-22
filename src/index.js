@@ -462,33 +462,38 @@ const conversationHistory = new Map(); // guildId -> [{role, content}]
 async function sendToOpenClaw(text, guildId) {
     // Get or initialize conversation history for this guild
     if (!conversationHistory.has(guildId)) {
-        // Build initial context
+        // Get current voice channel info
         const guild = client.guilds.cache.get(guildId);
         const voiceState = guild?.voiceStates?.cache;
         const members = voiceState?.filter(vc => vc.channelId)?.map(vc => vc.member?.displayName).filter(Boolean) || [];
         
         const systemPrompt = `You are Kimori, a helpful AI assistant talking to users in a Discord voice channel.
 
-## IMPORTANT: How Voice Works
-- You CANNOT directly control the music player - you are SEPARATE from it
-- When users want to play music, they must use Discord slash commands like /play
-- Guide users: "Say /play [song name] in chat to play music"
-- Do NOT say you can play music - tell them to use the /play command
-- You can hear what users say in voice chat and respond via TTS
+## Voice Channel Context
+- Users in voice: ${members.join(', ') || 'none'}
+- Bot is connected to voice in this Discord server
 
-## Your Capabilities (via slash commands)
-- /play [song] - Play YouTube music (users must type this in Discord chat)
-- /search [query] - Search for streams/radio
+## How Voice Commands Work
+When users speak to you in voice chat, they may want to use bot commands. When they ask to:
+- "Play [song]" → Tell them: "Say /play [song name] in chat to play music"
+- "Skip this" → Tell them: "Say /skip in chat"  
+- "What's playing" → Tell them: "Say /queue in chat"
+- "Stop music" → Tell them: "Say /stop in chat"
+
+IMPORTANT: You CANNOT directly control the music bot - you must tell users to use Discord slash commands in TEXT chat.
+
+## Available Slash Commands
+- /play [song] - Play YouTube music
+- /search [query] - Search for streams
 - /skip - Skip current song
 - /queue - See what's playing
+- /stop - Stop music
 
 ## Response Guidelines
 - NO EMOJIS - They don't translate well to speech
 - Keep responses short (voice conversation)
 - Be conversational and natural
-- If asked to play music, tell them: "Type /play [song name] in chat to play music"
-- If asked what you can do, explain the slash commands
-- Do NOT pretend you can control the bot - you're an AI assistant in the voice chat`;
+- If users ask for music commands, teach them the slash commands`;
 
         conversationHistory.set(guildId, [
             { role: 'system', content: systemPrompt }
@@ -497,8 +502,16 @@ async function sendToOpenClaw(text, guildId) {
     
     const history = conversationHistory.get(guildId);
     
-    // Add user message
-    history.push({ role: 'user', content: text });
+    // Get current voice members for context
+    const guild = client.guilds.cache.get(guildId);
+    const voiceMembers = guild?.voiceStates?.cache?.filter(vc => vc.channelId)?.map(vc => vc.member?.displayName).filter(Boolean) || [];
+    
+    // Add voice context to user message
+    const voiceContext = voiceMembers.length > 0 ? `[Voice users: ${voiceMembers.join(', ')}] ` : '';
+    const userMessage = voiceContext + text;
+    
+    // Add user message with voice context
+    history.push({ role: 'user', content: userMessage });
     
     // Keep history manageable (last 10 messages)
     if (history.length > 12) {
