@@ -63,6 +63,8 @@ const config = {
     WHISPER_MODEL: process.env.WHISPER_MODEL || 'medium',
     SILENCE_THRESHOLD_MS: 1500,
     WAKE_WORD: process.env.WAKE_WORD || 'echo',
+    // Bot identity
+    BOT_NAME: process.env.BOT_NAME || 'Kimori',
     // Parse comma-separated wake words into array
     WAKE_WORDS: (process.env.WAKE_WORD || 'echo').split(',').map(w => w.trim().toLowerCase()).filter(Boolean),
     // Thinking words - played while waiting for AI response
@@ -467,11 +469,18 @@ async function sendToOpenClaw(text, guildId) {
         const voiceState = guild?.voiceStates?.cache;
         const members = voiceState?.filter(vc => vc.channelId)?.map(vc => vc.member?.displayName).filter(Boolean) || [];
         
-        const systemPrompt = `You are Kimori, a helpful AI assistant talking to users in a Discord voice channel.
+        const botName = config.BOT_NAME;
+        const systemPrompt = `You are ${botName}, a helpful AI assistant talking to users in a Discord voice channel.
+You ARE the Discord bot "${botName}" - you are running as a voice bot in this Discord server.
 
 ## Voice Channel Context
+- Bot name: ${botName}
 - Users in voice: ${members.join(', ') || 'none'}
 - Bot is connected to voice in this Discord server
+
+## Your Identity
+You ARE the bot "${botName}" - don't pretend to be something else.
+When users speak to you, they are talking to YOU (the bot).
 
 ## How Voice Commands Work
 When users speak to you in voice chat, they may want to use bot commands. When they ask to:
@@ -519,12 +528,16 @@ IMPORTANT: You CANNOT directly control the music bot - you must tell users to us
     }
     
     // Use openclaw agent CLI for session-based responses
-    // Use guild ID for session context
+    // Use voice channel ID + guild ID for unique session per voice channel
+    const vc = voiceConnections.get(guildId);
+    const voiceChannelId = vc?.channelId || 'unknown';
+    const sessionId = `discord:${guildId}:${voiceChannelId}`;
+    
     return new Promise((resolve) => {
         const proc = spawn('openclaw', [
             'agent',
             '--channel', 'discord',
-            '--session-id', guildId.toString(),
+            '--session-id', sessionId,
             '--message', text,
             '--timeout', '30'
         ], {
