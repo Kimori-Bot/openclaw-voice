@@ -653,15 +653,6 @@ async function processVoiceAudio(guildId, audioBuffer, userId) {
     const text = result.text.trim();
     console.log(`📝 Transcribed: "${text}"`);
 
-    // Filter out common false positives (background noise that gets misheard)
-    // Only filter if the text is short (likely just noise) and matches these
-    const falsePositives = ['thank you', 'thanks', 'you too', 'mm-hmm', 'uh-huh', 'yep', 'nope'];
-    const lowerText = text.toLowerCase().replace(/[.,!?]/g, '').trim();
-    if (lowerText.length < 10 && falsePositives.some(fp => lowerText === fp || lowerText.includes(fp))) {
-        console.log(`📝 False positive detected, skipping: "${text}"`);
-        return;
-    }
-
     // Update buffer
     if (!transcriptionState.has(guildId)) {
         transcriptionState.set(guildId, { buffer: '', lastUpdate: Date.now(), processing: false, silenceTimer: null });
@@ -688,14 +679,13 @@ async function processVoiceAudio(guildId, audioBuffer, userId) {
             // Strip punctuation and normalize for better detection
             const normalizedText = finalText.toLowerCase().replace(/^[,\.\s]+|[,\.\s]+$/g, '').replace(/\s+/g, ' ');
             
-            // Check if any configured wake word is present (must be at start of text)
+            // Check if any configured wake word is present
             const hasWakeWord = config.WAKE_WORDS.some(wake => 
-                normalizedText.startsWith(wake) ||
-                normalizedText.startsWith('hey ' + wake) ||
-                normalizedText.startsWith('okay ' + wake) ||
-                normalizedText.startsWith('ok ' + wake) ||
-                normalizedText.startsWith('hey ' + wake) ||
-                normalizedText.includes(' ' + wake + ' ')  // wake word in middle
+                normalizedText.includes(wake) || 
+                normalizedText.includes('hey ' + wake) ||
+                normalizedText.includes('okay ' + wake) ||
+                normalizedText.includes('ok ' + wake) ||
+                normalizedText.startsWith(wake)
             );
 
             if (!config.ALWAYS_RESPOND && !hasWakeWord) {
