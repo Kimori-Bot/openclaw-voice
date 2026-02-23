@@ -342,11 +342,28 @@ class TranscriptionManager {
             normalized.startsWith('okay ' + w)
         );
         
+        // Check if music is playing
+        const vc = this.voiceManager.get(guildId);
+        const isMusicPlaying = vc?.player?.state?.status === 'playing';
+        
+        // Play wake word acknowledgment if wake word detected and no music
+        if (hasWakeWord && !isMusicPlaying) {
+            this.logger.info(`👂 Wake word detected, acknowledging...`);
+            try {
+                const { playAcknowledgment } = require('./tts');
+                await playAcknowledgment(guildId, this.voiceManager, this.logger);
+            } catch (e) {
+                this.logger.debug(`Ack error: ${e.message}`);
+            }
+        }
+        
         if (!this.config.ALWAYS_RESPOND && !hasWakeWord) {
             this.logger.info(`No wake word: "${text}"`);
             state.processing = false;
             return;
         }
+        
+        state.processing = true;
         
         state.processing = true;
         
@@ -381,9 +398,7 @@ class TranscriptionManager {
         // Log the response
         this.logger.info(`🤖 AI response: "${response}"`);
         
-        // Check if music is playing
-        const vc = this.voiceManager.get(guildId);
-        const isMusicPlaying = vc?.player?.state?.status === 'playing';
+        // Speak response or send to chat (isMusicPlaying already declared earlier)
         
         // Speak response or send to chat
         if (response && !response.startsWith('Error:') && response.length < 500) {

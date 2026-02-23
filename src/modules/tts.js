@@ -114,4 +114,61 @@ async function generateTTS(text, config, logger) {
     });
 }
 
-module.exports = { speak };
+// Play wake word acknowledgment sound
+async function playAcknowledgment(guildId, voiceManager, logger) {
+    const vc = voiceManager.get(guildId);
+    if (!vc || !vc.connection) return;
+    
+    // Try multiple acknowledgment options
+    const ackOptions = [
+        '/workspace/openclaw-voice/sounds/mhm.mp3',
+        '/workspace/openclaw-voice/sounds/acknowledged.mp3'
+    ];
+    
+    for (const soundPath of ackOptions) {
+        if (fs.existsSync(soundPath)) {
+            try {
+                const resource = createAudioResource(soundPath);
+                // Create a temporary player for acknowledgment
+                const ackPlayer = createAudioPlayer();
+                vc.connection.subscribe(ackPlayer);
+                ackPlayer.play(resource);
+                
+                ackPlayer.on(AudioPlayerStatus.Idle, () => {
+                    ackPlayer.stop();
+                });
+                
+                logger.debug(`🔔 Played acknowledgment: ${soundPath}`);
+                return;
+            } catch (e) {
+                logger.debug(`Failed to play ${soundPath}: ${e.message}`);
+            }
+        }
+    }
+    
+    // Fallback: quick TTS "mhm"
+    try {
+        const tempFile = `/tmp/openclaw-ack-${Date.now()}.mp3`;
+        const gtts = spawn('gtts-cli', ['mhm', '--output', tempFile, '--lang', 'en']);
+        
+        gtts.on('close', () => {
+            if (fs.existsSync(tempFile)) {
+                try {
+                    const resource = createAudioResource(tempFile);
+                    const ackPlayer = createAudioPlayer();
+                    vc.connection.subscribe(ackPlayer);
+                    ackPlayer.play(resource);
+                    
+                    ackPlayer.on(AudioPlayerStatus.Idle, () => {
+                        ackPlayer.stop();
+                        try { fs.unlinkSync(tempFile); } catch(e) {}
+                    });
+                } catch(e) {}
+            }
+        });
+    } catch (e) {
+        logger.debug(`Ack fallback failed: ${e.message}`);
+    }
+}
+
+module.exports = { speak, playAcknowledgment };

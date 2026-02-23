@@ -10,7 +10,7 @@ const {
 } = require('@discordjs/voice');
 
 // VAD for voice activity detection
-const VAD = require('webrtcvad');
+const VAD = require('webrtcvad').default || require('webrtcvad');
 
 class VoiceManager {
     constructor(config, logger) {
@@ -18,7 +18,7 @@ class VoiceManager {
         this.logger = logger;
         this.connections = new Map(); // guildId -> VoiceState
         this.vadMode = parseInt(process.env.VAD_MODE) || 3; // 0-3, 3 is most aggressive
-        this vad = new VAD(this.vadMode);
+        this.vad = new VAD(this.vadMode);
     }
     
     async join(guildId, channel, adapterCreator, onAudioReceived, textChannelId = null) {
