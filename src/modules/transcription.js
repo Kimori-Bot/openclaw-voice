@@ -364,12 +364,7 @@ class TranscriptionManager {
         // Stop TTS/music commands (check for "stop" anywhere in text)
         if (lowerText.includes('stop') || lowerText === 'quiet' || lowerText === 'shut up' || lowerText === 'be quiet' || lowerText === 'silence') {
             this.logger.info(`🛑 Hardcoded stop command: "${cleanText}"`);
-            // Stop any current TTS by stopping the player
-            const vc = this.voiceManager.get(guildId);
-            if (vc?.player) {
-                vc.player.stop();
-            }
-            // Also stop music queue if music manager available
+            // Clear queue - will stop after current song finishes
             if (this.musicManager) {
                 this.musicManager.clearQueue(guildId);
             }
