@@ -57,10 +57,6 @@ const config = {
 };
 
 // Initialize managers
-const voiceManager = new VoiceManager(config, logger);
-const musicManager = new MusicManager(config, logger);
-const transcriptionManager = new TranscriptionManager(config, logger, voiceManager, musicManager);
-
 // Discord client
 const client = new Client({
     intents: [
@@ -71,6 +67,10 @@ const client = new Client({
         GatewayIntentBits.GuildMembers
     ]
 });
+
+const voiceManager = new VoiceManager(config, logger);
+const musicManager = new MusicManager(config, logger);
+const transcriptionManager = new TranscriptionManager(config, logger, voiceManager, musicManager, client);
 
 // ============================================
 // STARTUP

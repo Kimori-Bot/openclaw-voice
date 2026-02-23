@@ -6,11 +6,12 @@ const fs = require('fs');
 const path = require('path');
 
 class TranscriptionManager {
-    constructor(config, logger, voiceManager, musicManager) {
+    constructor(config, logger, voiceManager, musicManager, client) {
         this.config = config;
         this.logger = logger;
         this.voiceManager = voiceManager;
         this.musicManager = musicManager;
+        this.client = client;
         this.transcriptionState = new Map(); // guildId -> { buffer, lastUpdate, processing, silenceTimer }
         this.wakeWords = (config.WAKE_WORD || 'echo').split(',').map(w => w.trim().toLowerCase()).filter(Boolean);
         
@@ -394,16 +395,27 @@ class TranscriptionManager {
         // Log the response
         this.logger.info(`🤖 AI response: "${response}"`);
         
-        // Skip TTS if music is currently playing
+        // Check if music is playing
         const vc = this.voiceManager.get(guildId);
         const isMusicPlaying = vc?.player?.state?.status === 'playing';
         
-        // Speak response only if no music playing
-        if (response && !response.startsWith('Error:') && response.length < 500 && !isMusicPlaying) {
-            const { speak } = require('./tts');
-            await speak(response, guildId, this.voiceManager, this.config, this.logger);
-        } else if (isMusicPlaying) {
-            this.logger.info(`🔇 Skipping TTS - music is playing`);
+        // Speak response or send to chat
+        if (response && !response.startsWith('Error:') && response.length < 500) {
+            if (isMusicPlaying) {
+                // Send to text channel instead of TTS
+                this.logger.info(`💬 Sending to chat (music playing): "${response}"`);
+                const textChannelId = vc?.textChannelId;
+                if (textChannelId && this.client) {
+                    const channel = await this.client.channels.fetch(textChannelId);
+                    if (channel) {
+                        await channel.send(response);
+                    }
+                }
+            } else {
+                // Normal TTS
+                const { speak } = require('./tts');
+                await speak(response, guildId, this.voiceManager, this.config, this.logger);
+            }
         }
         
         state.processing = false;
