@@ -58,7 +58,7 @@ const config = {
 
 // Initialize managers
 const voiceManager = new VoiceManager(config, logger);
-const musicManager = new MusicManager(config, logger);
+const musicManager = new MusicManager(config, logger, voiceManager);
 const transcriptionManager = new TranscriptionManager(config, logger, voiceManager, musicManager);
 
 // Discord client

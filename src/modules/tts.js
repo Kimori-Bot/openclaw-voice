@@ -13,20 +13,15 @@ async function speak(text, guildId, voiceManager, musicManager, config, logger) 
     
     // Strip emojis and Discord-specific characters for TTS
     text = text
-        .replace(/<:[a-zA-Z0-9_]+:\d+>/g, '') // Discord emoji :name:id
-        .replace(/[\u{1F300}-\u{1F9FF}]/gu, '') // Unicode emojis
-        .replace(/[\u{2600}-\u{26FF}]/gu, '') // Misc symbols
-        .replace(/[\u{2700}-\u{27BF}]/gu, '') // Dingbats
-        .replace(/[🎵🎶🎤🔊🔇⏸️⏹️⏭️⏮️➡️⬅️⬆️⬇️💀😂🤣❤️👍🔥✨]/g, '') // Music/common emojis
-        .replace(/[\*\_\`\~\`]/g, '') // Markdown
+        .replace(/<:[a-zA-Z0-9_]+:\d+>/g, '')
+        .replace(/[\u{1F300}-\u{1F9FF}]/gu, '')
+        .replace(/[\u{2600}-\u{26FF}]/gu, '')
+        .replace(/[\u{2700}-\u{27BF}]/gu, '')
+        .replace(/[🎵🎶🎤🔊🔇⏸️⏹️⏭️⏮️➡️⬅️⬆️⬇️💀😂🤣❤️👍🔥✨]/g, '')
+        .replace(/[\*\_\`\~\`]/g, '')
         .trim();
     
     if (!text) return;
-    
-    // Duck music if playing
-    if (musicManager?.duck) {
-        musicManager.duck(guildId);
-    }
     
     // Check cache
     const cacheKey = `${guildId}:${text}`;
@@ -36,10 +31,7 @@ async function speak(text, guildId, voiceManager, musicManager, config, logger) 
     if (!audioBuffer) {
         audioBuffer = await generateTTS(text, config, logger);
         if (audioBuffer) {
-            // Cache it
             ttsCache.set(cacheKey, audioBuffer);
-            
-            // Cleanup old cache entries
             if (ttsCache.size > 100) {
                 const firstKey = ttsCache.keys().next().value;
                 ttsCache.delete(firstKey);
@@ -49,21 +41,27 @@ async function speak(text, guildId, voiceManager, musicManager, config, logger) 
     
     if (!audioBuffer) return;
     
-    // Save and play
+    // Save to temp file
     const tempFile = `/tmp/openclaw-tts-${guildId}-${Date.now()}.mp3`;
     fs.writeFileSync(tempFile, audioBuffer);
     
-    const resource = createAudioResource(tempFile);
-    vc.player.play(resource);
-    
-    // Restore music after TTS finishes
-    vc.player.once(AudioPlayerStatus.Idle, () => {
-        try { fs.unlinkSync(tempFile); } catch(e) {}
-        // Unduck music
-        if (musicManager?.unduck) {
-            musicManager.unduck(guildId);
-        }
-    });
+    // Play TTS through pipeline if available
+    if (musicManager?.playTTS) {
+        logger?.info(`🎤 Playing TTS through pipeline`);
+        await musicManager.playTTS(guildId, tempFile);
+        
+        // Auto-stop TTS after 8 seconds
+        setTimeout(() => {
+            if (musicManager?.unduck) {
+                musicManager.unduck(guildId);
+            }
+            try { fs.unlinkSync(tempFile); } catch(e) {}
+        }, 8000);
+    } else {
+        // Fallback: direct play
+        const resource = createAudioResource(tempFile);
+        vc.player.play(resource);
+    }
 }
 
 async function generateTTS(text, config, logger) {
@@ -84,42 +82,44 @@ async function generateTTS(text, config, logger) {
                         'xi-api-key': config.ELEVENLABS_API_KEY
                     },
                     body: JSON.stringify({
-                        text,
-                        model_id: config.ELEVENLABS_MODEL || 'eleven_monolingual_v1',
+                        text: text,
+                        model_id: 'eleven_monolingual_v1',
                         voice_settings: {
-                            stability: parseFloat(config.ELEVENLABS_STABILITY) || 0.5,
-                            similarity_boost: parseFloat(config.ELEVENLABS_SIMILARITY) || 0.75
+                            stability: 0.5,
+                            similarity_boost: 0.8
                         }
                     })
                 }
             );
             
-            if (response.ok) {
-                logger.info(`🎤 ElevenLabs success, audio size: ${response.headers.get('content-length')}`);
-                return Buffer.from(await response.arrayBuffer());
-            } else {
-                const err = await response.text();
-                logger.info(`🎤 ElevenLabs error: ${response.status} - ${err}`);
+            if (!response.ok) {
+                throw new Error(`ElevenLabs API error: ${response.status}`);
             }
-        } catch(e) {
-            logger.info(`🎤 ElevenLabs exception: ${e.message}`);
+            
+            const buffer = await response.arrayBuffer();
+            logger.info(`🎤 ElevenLabs success: ${buffer.byteLength} bytes`);
+            return Buffer.from(buffer);
+        } catch (e) {
+            logger.error(`ElevenLabs error: ${e.message}`);
         }
     }
     
     // Fallback to gTTS
-    logger.info(`🎤 Falling back to gTTS`);
-    return new Promise((resolve) => {
-        const tempFile = `/tmp/openclaw-tts-${Date.now()}.mp3`;
-        const gtts = spawn('gtts-cli', [text, '--output', tempFile]);
+    logger.info(`🎤 Using gTTS`);
+    return new Promise((resolve, reject) => {
+        const lang = config.TTS_LANG || 'en';
+        const proc = spawn('gtts-cli', ['-l', lang, text], { stdio: ['ignore', 'pipe', 'pipe'] });
         
-        gtts.on('close', () => {
-            try {
-                const data = fs.readFileSync(tempFile);
-                fs.unlinkSync(tempFile);
-                resolve(data);
-            } catch(e) { resolve(null); }
+        let data = [];
+        proc.stdout.on('data', (chunk) => data.push(chunk));
+        proc.on('close', (code) => {
+            if (code === 0) {
+                resolve(Buffer.concat(data));
+            } else {
+                resolve(null);
+            }
         });
-        gtts.on('error', () => resolve(null));
+        proc.on('error', () => resolve(null));
     });
 }
 

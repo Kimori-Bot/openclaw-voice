@@ -1,16 +1,20 @@
 /**
  * Music Manager - Handles yt-dlp with caching for performance
+ * Uses AudioPipeline for music + TTS combining
  */
 const { spawn } = require('child_process');
 const { createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const fs = require('fs');
+const { AudioPipeline } = require('./audioPipeline');
 
 class MusicManager {
-    constructor(config, logger) {
+    constructor(config, logger, voiceManager = null) {
         this.config = config;
         this.logger = logger;
+        this.voiceManager = voiceManager;
         this.queues = new Map(); // guildId -> Song[]
         this.streamCache = new Map(); // url -> { streamUrl, expires }
+        this.pipeline = new AudioPipeline(logger);
         
         // Cache cleanup interval
         setInterval(() => this.cleanupCache(), 300000); // 5 min
@@ -183,14 +187,19 @@ class MusicManager {
         }
     }
     
-    // Unduck music (restore volume after TTS)
+    // Duck music - use pipeline
+    duck(guildId) {
+        // Pipeline handles this when playTTS is called
+    }
+    
+    // Unduck music
     unduck(guildId) {
-        const voiceState = this.voiceManager?.get(guildId);
-        if (voiceState?.isDucking) {
-            voiceState.isDucking = false;
-            voiceState.player.unpause();
-            this.logger?.info(`🔊 Restored music volume`);
-        }
+        this.pipeline.stopTTS(guildId);
+    }
+    
+    // Play TTS through pipeline
+    async playTTS(guildId, ttsFile) {
+        await this.pipeline.playTTS(guildId, ttsFile);
     }
     
     async playNext(guildId, voiceState, message = null) {
@@ -199,10 +208,12 @@ class MusicManager {
         
         try {
             const streamUrl = await this.getAudioStream(next.url);
-            const resource = this.createAudioResource(streamUrl);
+            await this.pipeline.start(guildId, voiceState, streamUrl);
             
-            voiceState.player.on(AudioPlayerStatus.Idle, () => this.playNext(guildId, voiceState, message));
-            voiceState.player.play(resource);
+            voiceState.player.on(AudioPlayerStatus.Idle, () => {
+                this.pipeline.stop(guildId);
+                this.playNext(guildId, voiceState, message);
+            });
             
             if (message) {
                 message.reply(`▶️ Now playing: ${next.title}`).catch(() => {});
@@ -238,10 +249,12 @@ class MusicManager {
         // Play immediately
         try {
             const streamUrl = await this.getAudioStream(playUrl);
-            const resource = this.createAudioResource(streamUrl);
+            await this.pipeline.start(guildId, voiceState, streamUrl);
             
-            voiceState.player.on(AudioPlayerStatus.Idle, () => this.playNext(guildId, voiceState, message));
-            voiceState.player.play(resource);
+            voiceState.player.on(AudioPlayerStatus.Idle, () => {
+                this.pipeline.stop(guildId);
+                this.playNext(guildId, voiceState, message);
+            });
         } catch (e) {
             this.logger.error('Play error:', e.message);
             message?.reply(`❌ Error: ${e.message}`).catch(() => {});
