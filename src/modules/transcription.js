@@ -122,7 +122,7 @@ class TranscriptionManager {
         
         // Try whisper.cpp CLI directly (fastest - no HTTP overhead)
         try {
-            this.logger.info(`📝 Trying whisper.cpp`);
+            this.logger.debug(`📝 Trying whisper.cpp`);
             const result = await this.transcribeWithWhisperCpp(audioPath);
             if (result) {
                 this.transcriptionCache.set(audioPath, { text: result, timestamp: Date.now() });
@@ -134,7 +134,7 @@ class TranscriptionManager {
         
         // Fallback to HTTP server
         try {
-            this.logger.info(`📝 Trying FasterWhisper HTTP`);
+            this.logger.debug(`📝 Trying FasterWhisper HTTP`);
             const response = await fetch(this.config.WHISPER_SERVER + '/transcribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -161,7 +161,7 @@ class TranscriptionManager {
             const outputFile = `/tmp/whisper-${timestamp}.txt`;
             const model = this.config.WHISPER_MODEL || 'tiny';
             
-            this.logger.info(`📝 Running whisper on: ${audioPath} (model: ${model})`);
+            this.logger.debug(`📝 Running whisper on: ${audioPath} (model: ${model})`);
             
             const proc = spawn('whisper-cli', [
                 '-m', `/root/.whisper/ggml-${model}.bin`,
@@ -177,25 +177,29 @@ class TranscriptionManager {
             
             proc.stderr.on('data', (data) => { 
                 stderr += data.toString(); 
-                this.logger.info(`📝 whisper stderr: ${data.toString().substring(0, 100)}`);
+                // Only log errors, not every debug line
+                const line = data.toString();
+                if (line.includes('error') || line.includes('Error')) {
+                    this.logger.debug(`📝 whisper stderr: ${line.substring(0, 150)}`);
+                }
             });
             
             proc.on('close', (code) => {
-                this.logger.info(`📝 whisper exited code: ${code}`);
+                this.logger.debug(`📝 whisper exited code: ${code}`);
                 // Read output file
                 try {
                     if (fs.existsSync(outputFile)) {
                         const text = fs.readFileSync(outputFile, 'utf8').trim();
                         fs.unlinkSync(outputFile);
-                        this.logger.info(`📝 whisper output: "${text}"`);
+                        this.logger.debug(`📝 whisper output: "${text}"`);
                         if (text) resolve(text);
                         else reject(new Error('No transcription output'));
                     } else {
-                        this.logger.info(`📝 whisper output file not found: ${outputFile}`);
+                        this.logger.debug(`📝 whisper output file not found: ${outputFile}`);
                         reject(new Error('No output file created'));
                     }
                 } catch(e) {
-                    this.logger.info(`📝 whisper error: ${e.message}`);
+                    this.logger.debug(`📝 whisper error: ${e.message}`);
                     reject(e);
                 }
             });
@@ -216,18 +220,18 @@ class TranscriptionManager {
     // AUDIO PROCESSING
     // ====================
     async processVoiceAudio(guildId, audioBuffer, userId) {
-        this.logger.info(`📥 processVoiceAudio called: ${audioBuffer?.length || 0} bytes`);
+        this.logger.debug(`📥 processVoiceAudio called: ${audioBuffer?.length || 0} bytes`);
         
         const vc = this.voiceManager.get(guildId);
-        this.logger.info(`📥 VC state: ${vc ? 'exists' : 'null'}, isListening: ${vc?.isListening}`);
+        this.logger.debug(`📥 VC state: ${vc ? 'exists' : 'null'}, isListening: ${vc?.isListening}`);
         
         if (!vc?.isListening) {
-            this.logger.info(`📥 Skipping - not in listening mode`);
+            this.logger.debug(`📥 Skipping - not in listening mode`);
             return;
         }
         
         if (!audioBuffer || audioBuffer.length < 100) {
-            this.logger.info(`📥 Skipping - audio too small (${audioBuffer?.length || 0} bytes)`);
+            this.logger.debug(`📥 Skipping - audio too small (${audioBuffer?.length || 0} bytes)`);
             return;
         }
         
@@ -244,7 +248,7 @@ class TranscriptionManager {
         
         fs.writeFileSync(pcmFile, audioBuffer);
         
-        this.logger.info(`📝 PCM file: ${pcmFile}, size: ${audioBuffer.length}`);
+        this.logger.debug(`📝 PCM file: ${pcmFile}, size: ${audioBuffer.length}`);
         
         // Convert to WAV for whisper with voice enhancement
         await new Promise((resolve) => {
@@ -259,12 +263,12 @@ class TranscriptionManager {
             ]);
             
             ff.on('close', (code) => {
-                this.logger.info(`📝 ffmpeg exit code: ${code}`);
+                this.logger.debug(`📝 ffmpeg exit code: ${code}`);
                 try { fs.unlinkSync(pcmFile); } catch(e) {}
                 resolve();
             });
             ff.on('error', (e) => {
-                this.logger.info(`📝 ffmpeg error: ${e.message}`);
+                this.logger.debug(`📝 ffmpeg error: ${e.message}`);
                 resolve();
             });
         });
