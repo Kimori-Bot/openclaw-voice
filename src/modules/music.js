@@ -162,11 +162,35 @@ class MusicManager {
     // ====================
     // PLAYBACK
     // ====================
-    createAudioResource(streamUrl) {
+    createAudioResource(streamUrl, volume = 0.5) {
         return createAudioResource(streamUrl, {
             inputType: 'unknown',
-            ffmpegArguments: ['-af', 'volume=0.5']
+            ffmpegArguments: ['-af', `volume=${volume}`]
         });
+    }
+    
+    // Duck music (lower volume for TTS)
+    duck(guildId) {
+        const voiceState = this.voiceManager?.get(guildId);
+        if (voiceState?.player && voiceState.player.state.status === AudioPlayerStatus.Playing) {
+            voiceState.isDucking = true;
+            // Re-create resource with lower volume
+            const currentResource = voiceState.player.state.resource;
+            // Just pause for now - we'll restore after TTS
+            voiceState.player.pause();
+            voiceState.player.pause();
+            this.logger?.info(`🔉 Ducking music for TTS`);
+        }
+    }
+    
+    // Unduck music (restore volume after TTS)
+    unduck(guildId) {
+        const voiceState = this.voiceManager?.get(guildId);
+        if (voiceState?.isDucking) {
+            voiceState.isDucking = false;
+            voiceState.player.unpause();
+            this.logger?.info(`🔊 Restored music volume`);
+        }
     }
     
     async playNext(guildId, voiceState, message = null) {

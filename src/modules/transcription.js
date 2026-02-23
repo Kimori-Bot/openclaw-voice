@@ -364,10 +364,13 @@ class TranscriptionManager {
         // Log the response
         this.logger.info(`🤖 AI response: "${response}"`);
         
-        // Speak response
-        if (response && !response.startsWith('Error:') && response.length < 500) {
+        // If AI is trying to play music (curl + play), don't also speak
+        const isMusicCommand = response && response.toLowerCase().includes('curl') && response.toLowerCase().includes('play');
+        
+        // Speak response (skip if AI just triggered music)
+        if (!isMusicCommand && response && !response.startsWith('Error:') && response.length < 500) {
             const { speak } = require('./tts');
-            await speak(response, guildId, this.voiceManager, this.config, this.logger);
+            await speak(response, guildId, this.voiceManager, this.musicManager, this.config, this.logger);
         }
         
         state.processing = false;
@@ -386,14 +389,13 @@ class TranscriptionManager {
             const identityContext = this.identity.context || '';
             const personality = this.identity.personality || '';
             const skills = `
-You are in Discord voice channel ${guildId}.
-The text channel for this server is: ${textChannelId}
+IMPORTANT - Your current Discord server (guild) ID is: ${guildId}
+You MUST use this exact guild ID in all API calls below!
 
-IMPORTANT - When sending messages, you MUST include:
-- channel: "discord"
-- channelId: "${textChannelId}"
+To play music, use curl like this:
+curl -X POST http://localhost:5000/play -H "Content-Type: application/json" -d '{"url": "SONG NAME", "guild_id": "${guildId}"}'
 
-Use message tool with these exact parameters to send messages to the correct channel!
+Replace "SONG NAME" with the actual song. Always use guild_id="${guildId}"!
 `;
             
             fullMessage = `${identityContext}\n\n${personality}\n${skills}\n\nUser: ${text}`;

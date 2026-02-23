@@ -7,7 +7,7 @@ const fs = require('fs');
 
 const ttsCache = new Map(); // text hash -> audio buffer
 
-async function speak(text, guildId, voiceManager, config, logger) {
+async function speak(text, guildId, voiceManager, musicManager, config, logger) {
     const vc = voiceManager.get(guildId);
     if (!vc) return;
     
@@ -22,6 +22,11 @@ async function speak(text, guildId, voiceManager, config, logger) {
         .trim();
     
     if (!text) return;
+    
+    // Duck music if playing
+    if (musicManager?.duck) {
+        musicManager.duck(guildId);
+    }
     
     // Check cache
     const cacheKey = `${guildId}:${text}`;
@@ -51,9 +56,13 @@ async function speak(text, guildId, voiceManager, config, logger) {
     const resource = createAudioResource(tempFile);
     vc.player.play(resource);
     
-    // Cleanup after playing
+    // Restore music after TTS finishes
     vc.player.once(AudioPlayerStatus.Idle, () => {
         try { fs.unlinkSync(tempFile); } catch(e) {}
+        // Unduck music
+        if (musicManager?.unduck) {
+            musicManager.unduck(guildId);
+        }
     });
 }
 
