@@ -11,6 +11,7 @@ class MusicManager {
         this.logger = logger;
         this.queues = new Map(); // guildId -> Song[]
         this.streamCache = new Map(); // url -> { streamUrl, expires }
+        this.radioMode = new Map(); // guildId -> { query, lastFetch }
         
         // Cache cleanup interval
         setInterval(() => this.cleanupCache(), 300000); // 5 min
@@ -109,6 +110,39 @@ class MusicManager {
         });
     }
     
+    // Search for multiple videos (for radio mode)
+    async searchYouTubeMultiple(query, count = 5) {
+        return new Promise((resolve) => {
+            const cacheKey = `search:${query}:${count}`;
+            const cached = this.getCachedStream(cacheKey);
+            if (cached) {
+                resolve(JSON.parse(cached));
+                return;
+            }
+            
+            const proc = spawn('yt-dlp', [
+                '--flat-playlist',
+                '--print', '%(id)s',
+                `ytsearch${count}:${query}`,
+                '--no-warnings'
+            ]);
+            
+            let output = '';
+            proc.stdout.on('data', (d) => { output += d.toString(); });
+            proc.on('close', (code) => {
+                const videoIds = output.trim().split('\n').filter(Boolean);
+                const results = videoIds.map(id => `https://www.youtube.com/watch?v=${id}`);
+                if (results.length > 0) {
+                    this.setCachedStream(cacheKey, JSON.stringify(results));
+                    resolve(results);
+                } else {
+                    resolve([]);
+                }
+            });
+            proc.on('error', () => resolve([]));
+        });
+    }
+    
     async getAudioStream(url) {
         const isYouTube = url.includes('youtube.com') || url.includes('youtu.be');
         
@@ -169,9 +203,39 @@ class MusicManager {
         });
     }
     
-    async playNext(guildId, voiceState, message = null) {
+    async playNext(guildId, voiceState, message = null, isRadio = false) {
         const next = this.getNextFromQueue(guildId);
-        if (!next) return;
+        if (!next) {
+            // Check if in radio mode and need more songs
+            const radio = this.radioMode.get(guildId);
+            if (radio) {
+                this.logger.info(`📻 Radio mode: fetching more tracks for ${radio.query}`);
+                const urls = await this.searchYouTubeMultiple(radio.query, 8);
+                for (const url of urls) {
+                    this.addToQueue(guildId, url, radio.query, 'radio');
+                }
+                if (urls.length > 0) {
+                    this.playNext(guildId, voiceState, message, true);
+                    return;
+                }
+            }
+            return;
+        }
+        
+        // If queue is getting low and we're in radio mode, fetch more
+        if (isRadio || this.radioMode.has(guildId)) {
+            const queue = this.getQueue(guildId);
+            if (queue.length < 3) {
+                const radio = this.radioMode.get(guildId);
+                if (radio) {
+                    this.logger.info(`📻 Radio mode: pre-fetching more tracks`);
+                    const urls = await this.searchYouTubeMultiple(radio.query, 8);
+                    for (const url of urls) {
+                        this.addToQueue(guildId, url, radio.query, 'radio');
+                    }
+                }
+            }
+        }
         
         try {
             const streamUrl = await this.getAudioStream(next.url);
@@ -207,14 +271,46 @@ class MusicManager {
         let playUrl = query;
         let title = query;
         
+        // Detect radio mode (query contains "radio" or "mix")
+        const isRadio = query.toLowerCase().includes('radio') || query.toLowerCase().includes('mix');
+        
         // Search if not a URL
         if (!query.match(/^https?:\/\//)) {
-            playUrl = await this.searchYouTube(query);
-            if (!playUrl) {
-                message?.reply('❌ Could not find video').catch(() => {});
+            if (isRadio) {
+                // Radio mode: search for multiple videos
+                this.logger.info(`📻 Radio mode detected for: ${query}`);
+                const urls = await this.searchYouTubeMultiple(query, 8);
+                if (urls.length === 0) {
+                    message?.reply('❌ Could not find radio station').catch(() => {});
+                    return;
+                }
+                // Enable radio mode
+                this.radioMode.set(guildId, { query, lastFetch: Date.now() });
+                // Queue all the URLs
+                for (const url of urls) {
+                    this.addToQueue(guildId, url, query, message?.author?.username);
+                }
+                // Play first one
+                const firstUrl = urls[0];
+                const streamUrl = await this.getAudioStream(firstUrl);
+                const resource = this.createAudioResource(streamUrl);
+                
+                voiceState.player.on('error', async (err) => {
+                    this.logger.error(`🎵 Radio player error: ${err.message}`);
+                });
+                
+                voiceState.player.on(AudioPlayerStatus.Idle, () => this.playNext(guildId, voiceState, message, true));
+                voiceState.player.play(resource);
+                message?.reply(`📻 Starting radio: ${query} (${urls.length} tracks queued)`).catch(() => {});
                 return;
+            } else {
+                playUrl = await this.searchYouTube(query);
+                if (!playUrl) {
+                    message?.reply('❌ Could not find video').catch(() => {});
+                    return;
+                }
+                title = query;
             }
-            title = query;
         }
         
         // Add to queue if something is playing
