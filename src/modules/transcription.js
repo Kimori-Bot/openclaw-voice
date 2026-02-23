@@ -361,8 +361,8 @@ class TranscriptionManager {
         // Check for hardcoded commands (before sending to AI)
         const lowerText = cleanText.toLowerCase();
         
-        // Stop TTS/music commands
-        if (lowerText === 'stop' || lowerText === 'stop talking' || lowerText === 'quiet' || lowerText === 'shut up' || lowerText === 'be quiet') {
+        // Stop TTS/music commands (check for "stop" anywhere in text)
+        if (lowerText.includes('stop') || lowerText === 'quiet' || lowerText === 'shut up' || lowerText === 'be quiet' || lowerText === 'silence') {
             this.logger.info(`🛑 Hardcoded stop command: "${cleanText}"`);
             // Stop any current TTS by stopping the player
             const vc = this.voiceManager.get(guildId);
@@ -378,7 +378,7 @@ class TranscriptionManager {
         }
         
         // Skip command
-        if (lowerText === 'skip' || lowerText === 'next' || lowerText === 'next song') {
+        if (lowerText.includes('skip') || lowerText.includes('next song') || lowerText.includes('next track')) {
             this.logger.info(`⏭️ Hardcoded skip command: "${cleanText}"`);
             const vc = this.voiceManager.get(guildId);
             if (vc && this.musicManager) {
