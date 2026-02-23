@@ -158,11 +158,12 @@ class TranscriptionManager {
         return new Promise((resolve, reject) => {
             const timestamp = Date.now();
             const outputFile = `/tmp/whisper-${timestamp}.txt`;
+            const model = this.config.WHISPER_MODEL || 'tiny';
             
-            this.logger.info(`📝 Running whisper on: ${audioPath}`);
+            this.logger.info(`📝 Running whisper on: ${audioPath} (model: ${model})`);
             
             const proc = spawn('whisper-cli', [
-                '-m', '/root/.whisper/ggml-tiny.bin',
+                '-m', `/root/.whisper/ggml-${model}.bin`,
                 '-f', audioPath,
                 '-otxt',
                 '-of', `/tmp/whisper-${timestamp}`,
