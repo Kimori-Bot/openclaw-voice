@@ -79,7 +79,7 @@ client.once('ready', async () => {
     logger.info(`✅ Logged in as ${client.user.tag}`);
     await registerCommands(client);
     logger.info('📢 Commands registered');
-    
+
     // Health check interval
     setInterval(() => {
         logger.debug(`Active connections: ${voiceManager.getConnectionCount()}`);
@@ -95,7 +95,7 @@ client.on('voiceStateUpdate', (oldState, newState) => {
         voiceManager.cleanup(guildId);
         musicManager.clearQueue(guildId);
     }
-    
+
     // Debug: log all voice state changes
     if (oldState.channelId !== newState.channelId) {
         logger.info(`🔊 Voice state: ${oldState.member?.user?.username} moved from ${oldState.channelId} to ${newState.channelId}`);
@@ -107,7 +107,7 @@ client.on('interactionCreate', async (interaction) => {
     
     const guildId = interaction.guildId;
     const vc = voiceManager.get(guildId);
-    
+
     try {
         await handleInteraction(interaction, {
             config,
@@ -138,15 +138,15 @@ client.on('interactionCreate', async (interaction) => {
 // Auto-join on message
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
-    
+
     const member = message.member;
     const voiceChannel = member?.voice?.channel;
     const guildId = message.guild.id;
-    
+
     // Auto-join
     if (voiceChannel && !voiceManager.has(guildId)) {
         try {
-            await voiceManager.join(guildId, voiceChannel, message.guild.voiceAdapterCreator, 
+            await voiceManager.join(guildId, voiceChannel, message.guild.voiceAdapterCreator,
                 (guildId, audioBuffer, userId) => {
                     transcriptionManager.processVoiceAudio(guildId, audioBuffer, userId);
                 });
@@ -154,6 +154,43 @@ client.on('messageCreate', async (message) => {
         } catch (e) {
             logger.error('Auto-join error:', e);
         }
+    }
+});
+
+// Handle bot messages (from AI) - execute music commands
+client.on('messageCreate', async (message) => {
+    // Only handle messages from the bot itself that start with / commands
+    if (!message.author.bot || message.author.id !== client.user.id) return;
+    if (!message.guild) return;
+    
+    const content = message.content.trim();
+    const guildId = message.guild.id;
+    const vc = voiceManager.get(guildId);
+    
+    if (content.startsWith('/play ')) {
+        const query = content.substring(6).trim();
+        if (query && vc) {
+            logger.info(`🎵 AI triggered play: "${query}"`);
+            await musicManager.play(guildId, query, vc, null);
+            // Delete the bot's message to keep chat clean
+            try { await message.delete(); } catch {}
+        }
+    } else if (content === '/skip' || content.startsWith('/skip ')) {
+        if (vc) {
+            logger.info(`⏭️ AI triggered skip`);
+            musicManager.playNext(guildId, vc);
+            try { await message.delete(); } catch {}
+        }
+    } else if (content === '/stop' || content.startsWith('/stop ')) {
+        logger.info(`⏹️ AI triggered stop`);
+        musicManager.clearQueue(guildId);
+        try { await message.delete(); } catch {}
+    } else if (content === '/queue' || content.startsWith('/queue ')) {
+        const q = musicManager.getQueue(guildId);
+        const reply = q.length ? 'Queue: ' + q.map((s, i) => `${i+1}. ${s.title}`).join(', ') : 'Queue is empty';
+        await message.reply(reply);
+        // Delete the command after a few seconds
+        setTimeout(() => { try { message.delete(); } catch {} }, 5000);
     }
 });
 

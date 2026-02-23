@@ -11,7 +11,6 @@ class TranscriptionManager {
         this.logger = logger;
         this.voiceManager = voiceManager;
         this.musicManager = musicManager;
-        
         this.transcriptionState = new Map(); // guildId -> { buffer, lastUpdate, processing, silenceTimer }
         this.wakeWords = (config.WAKE_WORD || 'echo').split(',').map(w => w.trim().toLowerCase()).filter(Boolean);
         
@@ -23,6 +22,12 @@ class TranscriptionManager {
         
         // Load identity
         this.identity = this.loadIdentity();
+    }
+    
+    resetSession(guildId) {
+        const sessionKey = `discord-${guildId}`;
+        this.initializedSessions.delete(sessionKey);
+        this.logger.info(`🔄 Reset session for ${sessionKey}`);
     }
     
     loadIdentity() {
@@ -358,35 +363,6 @@ class TranscriptionManager {
         // Log the response
         this.logger.info(`🤖 AI response: "${response}"`);
         
-        // Check for music commands
-        const upperResponse = response.toUpperCase();
-        
-        if (upperResponse.startsWith('PLAY:')) {
-            const songName = response.substring(5).trim();
-            if (songName) {
-                this.logger.info(`🎵 Playing: "${songName}"`);
-                const vc = this.voiceManager.get(guildId);
-                if (vc && this.musicManager) {
-                    await this.musicManager.play(guildId, songName, vc, null);
-                }
-                // Don't speak - music is playing
-                state.processing = false;
-                return;
-            }
-        } else if (upperResponse === 'QUEUE' || upperResponse.includes('QUEUE:')) {
-            const q = this.musicManager?.getQueue(guildId) || [];
-            response = q.length ? 'Queue: ' + q.map((s, i) => `${i+1}. ${s.title}`).join(', ') : 'Queue is empty';
-        } else if (upperResponse === 'SKIP' || upperResponse.includes('SKIP:')) {
-            const vc = this.voiceManager.get(guildId);
-            if (vc && this.musicManager) {
-                this.musicManager.playNext(guildId, vc);
-            }
-            response = 'Skipped';
-        } else if (upperResponse === 'STOP' || upperResponse.includes('STOP:')) {
-            this.musicManager?.clearQueue(guildId);
-            response = 'Stopped';
-        }
-        
         // Speak response
         if (response && !response.startsWith('Error:') && response.length < 500) {
             const { speak } = require('./tts');
@@ -402,17 +378,21 @@ class TranscriptionManager {
         // Build message - only prepend identity on first message for this guild
         let fullMessage = text;
         if (!this.initializedSessions.has(sessionKey)) {
+            // Get text channel ID from voice state
+            const vc = this.voiceManager.get(guildId);
+            const textChannelId = vc?.textChannelId || guildId;
+            
             const identityContext = this.identity.context || '';
             const personality = this.identity.personality || '';
             const skills = `
-You have these capabilities:
-- Play music: Use /play [song name] to play from YouTube
-- Queue: Use /queue to see upcoming songs
-- Skip: Use /skip to skip current song
-- Stop: Use /stop to stop playback
-- Record: Use /record to start recording voice
+You are in Discord voice channel ${guildId}.
+The text channel for this server is: ${textChannelId}
 
-You are currently in a Discord voice channel with the user. You can control music playback using Discord slash commands.
+IMPORTANT - When sending messages, you MUST include:
+- channel: "discord"
+- channelId: "${textChannelId}"
+
+Use message tool with these exact parameters to send messages to the correct channel!
 `;
             
             fullMessage = `${identityContext}\n\n${personality}\n${skills}\n\nUser: ${text}`;

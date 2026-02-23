@@ -2,7 +2,7 @@
  * API Module - Express REST API
  */
 function createApiServer(app, deps) {
-    const { client, voiceManager, musicManager, logger } = deps;
+    const { client, voiceManager, musicManager, transcriptionManager, logger } = deps;
     
     app.get('/health', (req, res) => {
         res.json({ 
@@ -74,6 +74,15 @@ function createApiServer(app, deps) {
         const { guildId } = req.params;
         const queue = musicManager.getQueue(guildId);
         res.json({ queue });
+    });
+    
+    // Reset session/identity for a guild
+    app.post('/reset/:guildId', (req, res) => {
+        const { guildId } = req.params;
+        if (transcriptionManager) {
+            transcriptionManager.resetSession(guildId);
+        }
+        res.json({ status: 'reset', guildId, message: 'Session reset' });
     });
 }
 

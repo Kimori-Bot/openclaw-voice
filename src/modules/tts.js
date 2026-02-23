@@ -11,6 +11,18 @@ async function speak(text, guildId, voiceManager, config, logger) {
     const vc = voiceManager.get(guildId);
     if (!vc) return;
     
+    // Strip emojis and Discord-specific characters for TTS
+    text = text
+        .replace(/<:[a-zA-Z0-9_]+:\d+>/g, '') // Discord emoji :name:id
+        .replace(/[\u{1F300}-\u{1F9FF}]/gu, '') // Unicode emojis
+        .replace(/[\u{2600}-\u{26FF}]/gu, '') // Misc symbols
+        .replace(/[\u{2700}-\u{27BF}]/gu, '') // Dingbats
+        .replace(/[🎵🎶🎤🔊🔇⏸️⏹️⏭️⏮️➡️⬅️⬆️⬇️💀😂🤣❤️👍🔥✨]/g, '') // Music/common emojis
+        .replace(/[\*\_\`\~\`]/g, '') // Markdown
+        .trim();
+    
+    if (!text) return;
+    
     // Check cache
     const cacheKey = `${guildId}:${text}`;
     let audioBuffer = ttsCache.get(cacheKey);
