@@ -361,17 +361,6 @@ class TranscriptionManager {
         // Check for hardcoded commands (before sending to AI)
         const lowerText = cleanText.toLowerCase();
         
-        // Stop TTS/music commands (check for "stop" anywhere in text)
-        if (lowerText.includes('stop') || lowerText === 'quiet' || lowerText === 'shut up' || lowerText === 'be quiet' || lowerText === 'silence') {
-            this.logger.info(`🛑 Hardcoded stop command: "${cleanText}"`);
-            // Clear queue - will stop after current song finishes
-            if (this.musicManager) {
-                this.musicManager.clearQueue(guildId);
-            }
-            state.processing = false;
-            return;
-        }
-        
         // Skip command
         if (lowerText.includes('skip') || lowerText.includes('next song') || lowerText.includes('next track')) {
             this.logger.info(`⏭️ Hardcoded skip command: "${cleanText}"`);
