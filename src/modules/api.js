@@ -84,6 +84,44 @@ function createApiServer(app, deps) {
         }
         res.json({ status: 'reset', guildId, message: 'Session reset' });
     });
+    
+    // Skip current song
+    app.post('/skip/:guildId', (req, res) => {
+        const { guildId } = req.params;
+        const vc = voiceManager.get(guildId);
+        if (vc && musicManager) {
+            musicManager.playNext(guildId, vc);
+            res.json({ status: 'skipped' });
+        } else {
+            res.status(400).json({ error: 'Not in voice channel' });
+        }
+    });
+    
+    // Stop and clear queue
+    app.post('/stop/:guildId', (req, res) => {
+        const { guildId } = req.params;
+        if (musicManager) {
+            musicManager.clearQueue(guildId);
+        }
+        res.json({ status: 'stopped' });
+    });
+    
+    // Leave voice channel
+    app.post('/leave/:guildId', (req, res) => {
+        const { guildId } = req.params;
+        voiceManager.cleanup(guildId);
+        if (musicManager) {
+            musicManager.clearQueue(guildId);
+        }
+        res.json({ status: 'left' });
+    });
+    
+    // Get now playing
+    app.get('/nowplaying/:guildId', (req, res) => {
+        const { guildId } = req.params;
+        const queue = musicManager?.getQueue(guildId) || [];
+        res.json({ nowPlaying: queue[0] || null, queueLength: queue.length });
+    });
 }
 
 module.exports = { createApiServer };

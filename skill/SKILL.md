@@ -131,28 +131,66 @@ node src/index.js
 
 The bot integrates with OpenClaw for AI-powered voice conversations. When users speak in voice chat, it's transcribed and sent to OpenClaw for processing.
 
-### How AI Controls Music
+### REST API (Port 5000)
 
-AI can control music via the REST API (no Discord messages needed):
+AI can control the bot via REST API using `exec` tool with curl:
 
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/play` | POST | Play a song |
+| `/queue/:guildId` | GET | Get current queue |
+| `/skip/:guildId` | POST | Skip current song |
+| `/stop/:guildId` | POST | Stop and clear queue |
+| `/leave/:guildId` | POST | Leave voice channel |
+| `/nowplaying/:guildId` | GET | Get now playing |
+| `/reset/:guildId` | POST | Reset AI session |
+| `/health` | GET | Health check |
+
+#### Examples
+
+**Play a song:**
 ```bash
-# Play a song
 curl -X POST http://localhost:5000/play \
   -H "Content-Type: application/json" \
   -d '{"url": "song name or YouTube URL", "guild_id": "DISCORD_GUILD_ID"}'
+```
 
-# Get queue
+**Get queue:**
+```bash
 curl http://localhost:5000/queue/DISCORD_GUILD_ID
 ```
 
-The API runs on port 5000 by default. Use `exec` tool to run curl commands.
-
-### Session Management
-
+**Skip song:**
 ```bash
-# Reset AI session (force fresh identity)
+curl -X POST http://localhost:5000/skip/DISCORD_GUILD_ID
+```
+
+**Stop playback:**
+```bash
+curl -X POST http://localhost:5000/stop/DISCORD_GUILD_ID
+```
+
+**Leave voice:**
+```bash
+curl -X POST http://localhost:5000/leave/DISCORD_GUILD_ID
+```
+
+**Get now playing:**
+```bash
+curl http://localhost:5000/nowplaying/DISCORD_GUILD_ID
+```
+
+**Reset AI session (fresh identity):**
+```bash
 curl -X POST http://localhost:5000/reset/DISCORD_GUILD_ID
 ```
+
+**Health check:**
+```bash
+curl http://localhost:5000/health
+```
+
+**Note:** Always include `guild_id` in requests. The bot must be in a voice channel in that guild.
 
 ## Voice Conversation
 
