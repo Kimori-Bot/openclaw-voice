@@ -65,7 +65,27 @@ sudo systemctl enable openclaw-voice
 
 ```bash
 mkdir -p ~/.whisper
+```
+
+Available models (size/quality tradeoff):
+
+| Model | Size | Speed | Quality |
+|-------|------|-------|---------|
+| tiny | ~39 MB | Fastest | Lowest |
+| base | ~74 MB | Fast | Basic |
+| small | ~244 MB | Medium | Moderate |
+| medium | ~769 MB | Slow | Good |
+| large | ~1550 MB | Slowest | Best |
+
+```bash
+# Download base model (recommended for most)
+wget -O ~/.whisper/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+
+# Or tiny for low-end devices
 wget -O ~/.whisper/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+
+# Or large for best quality
+wget -O ~/.whisper/ggml-large.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large.bin
 ```
 
 ### 3. Configure .env
@@ -83,8 +103,9 @@ WAKE_WORD=echo              # Wake word (comma-separated: echo,kimori)
 ALWAYS_RESPOND=false        # If true, respond to everything
 
 # STT (whisper.cpp CLI)
+# Options: tiny, base, small, medium, large
 STT_ENGINE=local
-WHISPER_MODEL=tiny
+WHISPER_MODEL=base
 
 # TTS (gTTS is default)
 TTS_ENGINE=local
