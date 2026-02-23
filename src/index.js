@@ -43,7 +43,7 @@ const config = {
     TOKEN: process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN,
     OPENCLAW_API: process.env.OPENCLAW_API || 'http://localhost:8080',
     WHISPER_SERVER: process.env.WHISPER_SERVER || 'http://127.0.0.1:5001',
-    WHISPER_MODEL: process.env.WHISPER_MODEL || 'small', // Optimized: default to small for speed
+    WHISPER_MODEL: process.env.WHISPER_MODEL || 'small',
     STT_ENGINE: process.env.STT_ENGINE || 'local',
     ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || '',
     TTS_ENGINE: process.env.TTS_ENGINE || 'elevenlabs',
@@ -59,7 +59,7 @@ const config = {
 // Initialize managers
 const voiceManager = new VoiceManager(config, logger);
 const musicManager = new MusicManager(config, logger);
-const transcriptionManager = new TranscriptionManager(config, logger, voiceManager);
+const transcriptionManager = new TranscriptionManager(config, logger, voiceManager, musicManager);
 
 // Discord client
 const client = new Client({

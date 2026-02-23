@@ -59,10 +59,11 @@ async function handleInteraction(interaction, deps) {
         }
         
         try {
+            const textChannelId = interaction.channelId;
             vc = await voiceManager.join(guildId, member.voice.channel, guild.voiceAdapterCreator, 
                 (guildId, audioBuffer, userId) => {
                     transcriptionManager.processVoiceAudio(guildId, audioBuffer, userId);
-                });
+                }, textChannelId);
             await interaction.editReply('🎤 Joined!');
             return vc;
         } catch (e) {
@@ -206,8 +207,9 @@ async function handleInteraction(interaction, deps) {
             break;
             
         case 'help':
+            const identity = transcriptionManager?.identity || { name: 'Assistant' };
             await interaction.reply({ embeds: [new (require('discord.js').EmbedBuilder)()
-                .setTitle('🤖 OpenClaw Voice Commands')
+                .setTitle(`🤖 ${identity.name} Voice Commands`)
                 .addFields(
                     { name: '/play [song]', value: 'Play from YouTube' },
                     { name: '/search [query]', value: 'AI song search' },
@@ -217,8 +219,10 @@ async function handleInteraction(interaction, deps) {
                     { name: '/stop', value: 'Stop' },
                     { name: '/clear', value: 'Clear queue' },
                     { name: '/listen', value: 'Voice conversation' },
+                    { name: '/record', value: 'Record audio' },
                     { name: '/say [text]', value: 'Speak text' }
                 )
+                .setFooter({ text: `Powered by ${identity.name}` })
             ]});
             break;
     }

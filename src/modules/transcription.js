@@ -6,16 +6,76 @@ const fs = require('fs');
 const path = require('path');
 
 class TranscriptionManager {
-    constructor(config, logger, voiceManager) {
+    constructor(config, logger, voiceManager, musicManager) {
         this.config = config;
         this.logger = logger;
         this.voiceManager = voiceManager;
+        this.musicManager = musicManager;
         
         this.transcriptionState = new Map(); // guildId -> { buffer, lastUpdate, processing, silenceTimer }
         this.wakeWords = (config.WAKE_WORD || 'echo').split(',').map(w => w.trim().toLowerCase()).filter(Boolean);
         
         // Cache for transcriptions
         this.transcriptionCache = new Map(); // path -> { text, timestamp }
+        
+        // Track initialized sessions (only send identity once per guild)
+        this.initializedSessions = new Set();
+        
+        // Load identity
+        this.identity = this.loadIdentity();
+    }
+    
+    loadIdentity() {
+        const identityPath = path.join(__dirname, '..', '..', 'identity.yaml');
+        
+        try {
+            if (fs.existsSync(identityPath)) {
+                const content = fs.readFileSync(identityPath, 'utf8');
+                
+                // Simple YAML parsing
+                const identity = {
+                    name: 'Assistant',
+                    description: '',
+                    personality: '',
+                    skills: [],
+                    response_guidelines: '',
+                    context: ''
+                };
+                
+                // Extract name
+                const nameMatch = content.match(/name:\s*(.+)/);
+                if (nameMatch) identity.name = nameMatch[1].trim();
+                
+                // Extract description
+                const descMatch = content.match(/description:\s*(.+?)(?=\n\w+:|$)/s);
+                if (descMatch) identity.description = descMatch[1].trim();
+                
+                // Extract personality
+                const persMatch = content.match(/personality:[\s\n]*\|?([\s\S]*?)skills:/i);
+                if (persMatch) {
+                    identity.personality = persMatch[1].replace(/^\s*\|?\s*/m, '').trim();
+                }
+                
+                // Extract response guidelines
+                const respMatch = content.match(/response_guidelines:[\s\n]*\|?([\s\S]*?)context:/i);
+                if (respMatch) {
+                    identity.response_guidelines = respMatch[1].replace(/^\s*\|?\s*/m, '').trim();
+                }
+                
+                // Extract context
+                const ctxMatch = content.match(/context:[\s\n]*\|?([\s\S]*)/i);
+                if (ctxMatch) {
+                    identity.context = ctxMatch[1].replace(/^\s*\|?\s*/m, '').trim();
+                }
+                
+                this.logger.info(`📛 Loaded identity: ${identity.name} - ${identity.description}`);
+                return identity;
+            }
+        } catch(e) {
+            this.logger.info(`⚠️ Could not load identity: ${e.message}`);
+        }
+        
+        return { name: 'Assistant', description: '', personality: '', skills: [], response_guidelines: '', context: '' };
     }
     
     // ====================
@@ -257,9 +317,13 @@ class TranscriptionManager {
         
         const text = state.buffer.trim();
         if (text.length < 2) {
+            state.buffer = '';
             state.processing = false;
             return;
         }
+        
+        // Clear buffer NOW to prevent accumulation
+        state.buffer = '';
         
         // Check wake word - strip all punctuation
         const normalized = text.toLowerCase().replace(/[,\.\s]+/g, ' ').trim();
@@ -276,20 +340,52 @@ class TranscriptionManager {
         }
         
         state.processing = true;
-        state.buffer = '';
         
-        // Clean text
+        // Keep original text for AI (includes wake word for context)
+        // But clean it up - remove "hey <wake>" and "okay <wake>" patterns
         let cleanText = text;
         this.wakeWords.forEach(w => {
-            cleanText = cleanText.replace(new RegExp(w, 'gi'), '');
-            cleanText = cleanText.replace(new RegExp('hey\\s*' + w, 'gi'), '');
-            cleanText = cleanText.replace(new RegExp('okay\\s*' + w, 'gi'), '');
+            cleanText = cleanText.replace(new RegExp('hey\\s+' + w + '\\s*', 'gi'), '');
+            cleanText = cleanText.replace(new RegExp('okay\\s+' + w + '\\s*', 'gi'), '');
+            cleanText = cleanText.replace(new RegExp(w + '[,\\.]\\s*', 'gi'), '');
         });
         cleanText = cleanText.replace(/^[,\.\s]+/, '').trim() || text;
         
         // Send to OpenClaw
-        this.logger.info(`Sending to AI: "${cleanText}"`);
+        this.logger.info(`📤 Sending to AI: "${cleanText}"`);
         const response = await this.sendToOpenClaw(cleanText, guildId);
+        
+        // Log the response
+        this.logger.info(`🤖 AI response: "${response}"`);
+        
+        // Check for music commands
+        const upperResponse = response.toUpperCase();
+        
+        if (upperResponse.startsWith('PLAY:')) {
+            const songName = response.substring(5).trim();
+            if (songName) {
+                this.logger.info(`🎵 Playing: "${songName}"`);
+                const vc = this.voiceManager.get(guildId);
+                if (vc && this.musicManager) {
+                    await this.musicManager.play(guildId, songName, vc, null);
+                }
+                // Don't speak - music is playing
+                state.processing = false;
+                return;
+            }
+        } else if (upperResponse === 'QUEUE' || upperResponse.includes('QUEUE:')) {
+            const q = this.musicManager?.getQueue(guildId) || [];
+            response = q.length ? 'Queue: ' + q.map((s, i) => `${i+1}. ${s.title}`).join(', ') : 'Queue is empty';
+        } else if (upperResponse === 'SKIP' || upperResponse.includes('SKIP:')) {
+            const vc = this.voiceManager.get(guildId);
+            if (vc && this.musicManager) {
+                this.musicManager.playNext(guildId, vc);
+            }
+            response = 'Skipped';
+        } else if (upperResponse === 'STOP' || upperResponse.includes('STOP:')) {
+            this.musicManager?.clearQueue(guildId);
+            response = 'Stopped';
+        }
         
         // Speak response
         if (response && !response.startsWith('Error:') && response.length < 500) {
@@ -301,12 +397,37 @@ class TranscriptionManager {
     }
     
     async sendToOpenClaw(text, guildId) {
+        const sessionKey = `discord-${guildId}`;
+        
+        // Build message - only prepend identity on first message for this guild
+        let fullMessage = text;
+        if (!this.initializedSessions.has(sessionKey)) {
+            const identityContext = this.identity.context || '';
+            const personality = this.identity.personality || '';
+            const skills = `
+You have these capabilities:
+- Play music: Use /play [song name] to play from YouTube
+- Queue: Use /queue to see upcoming songs
+- Skip: Use /skip to skip current song
+- Stop: Use /stop to stop playback
+- Record: Use /record to start recording voice
+
+You are currently in a Discord voice channel with the user. You can control music playback using Discord slash commands.
+`;
+            
+            fullMessage = `${identityContext}\n\n${personality}\n${skills}\n\nUser: ${text}`;
+            this.initializedSessions.add(sessionKey);
+            this.logger.info(`📛 Sent identity to new session: ${this.identity.name} (${sessionKey})`);
+        }
+        
+        this.logger.info(`📤 Sending to OpenClaw (session: ${sessionKey}): "${text}"`);
+        
         return new Promise((resolve) => {
             const proc = spawn('openclaw', [
                 'agent',
                 '--channel', 'discord',
-                '--session-id', `discord-${guildId}`,
-                '--message', text,
+                '--session-id', sessionKey,
+                '--message', fullMessage,
                 '--timeout', '30'
             ], { stdio: ['ignore', 'pipe', 'pipe'] });
             

@@ -19,9 +19,15 @@ class VoiceManager {
         this.connections = new Map(); // guildId -> VoiceState
     }
     
-    async join(guildId, channel, adapterCreator, onAudioReceived) {
+    async join(guildId, channel, adapterCreator, onAudioReceived, textChannelId = null) {
         if (this.connections.has(guildId)) {
-            return this.connections.get(guildId);
+            const existing = this.connections.get(guildId);
+            // Update text channel if provided
+            if (textChannelId && !existing.textChannelId) {
+                existing.textChannelId = textChannelId;
+                this.connections.set(guildId, existing);
+            }
+            return existing;
         }
         
         const connection = joinVoiceChannel({
@@ -123,6 +129,7 @@ class VoiceManager {
             player,
             receiver,
             channelId: channel.id,
+            textChannelId: textChannelId,
             isListening: true,
             isRecording: false,
             recordingChunks: [],

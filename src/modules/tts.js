@@ -46,11 +46,16 @@ async function speak(text, guildId, voiceManager, config, logger) {
 }
 
 async function generateTTS(text, config, logger) {
+    logger.info(`🎤 TTS request: engine=${config.TTS_ENGINE}, has_key=${!!config.ELEVENLABS_API_KEY}, voice=${config.ELEVENLABS_VOICE_ID}`);
+    
     // Try ElevenLabs first
     if (config.TTS_ENGINE === 'elevenlabs' && config.ELEVENLABS_API_KEY) {
         try {
+            const voiceId = config.ELEVENLABS_VOICE_ID || 'rachel';
+            logger.info(`🎤 Calling ElevenLabs API with voice: ${voiceId}`);
+            
             const response = await fetch(
-                `https://api.elevenlabs.io/v1/text-to-speech/${config.ELEVENLABS_VOICE_ID || 'rachel'}`,
+                `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
                 {
                     method: 'POST',
                     headers: {
@@ -69,14 +74,19 @@ async function generateTTS(text, config, logger) {
             );
             
             if (response.ok) {
+                logger.info(`🎤 ElevenLabs success, audio size: ${response.headers.get('content-length')}`);
                 return Buffer.from(await response.arrayBuffer());
+            } else {
+                const err = await response.text();
+                logger.info(`🎤 ElevenLabs error: ${response.status} - ${err}`);
             }
         } catch(e) {
-            logger.debug('ElevenLabs TTS error:', e.message);
+            logger.info(`🎤 ElevenLabs exception: ${e.message}`);
         }
     }
     
     // Fallback to gTTS
+    logger.info(`🎤 Falling back to gTTS`);
     return new Promise((resolve) => {
         const tempFile = `/tmp/openclaw-tts-${Date.now()}.mp3`;
         const gtts = spawn('gtts-cli', [text, '--output', tempFile]);
