@@ -76,7 +76,7 @@ async function generateTTS(text, config, logger) {
                     },
                     body: JSON.stringify({
                         text,
-                        model_id: config.ELEVENLABS_MODEL || 'eleven_monolingual_v1',
+                        model_id: config.ELEVENLABS_MODEL || 'eleven_turbo_v2',
                         voice_settings: {
                             stability: parseFloat(config.ELEVENLABS_STABILITY) || 0.5,
                             similarity_boost: parseFloat(config.ELEVENLABS_SIMILARITY) || 0.75
