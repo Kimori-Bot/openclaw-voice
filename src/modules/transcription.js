@@ -357,6 +357,36 @@ class TranscriptionManager {
         });
         cleanText = cleanText.replace(/^[,\.\s]+/, '').trim() || text;
         
+        // Check for hardcoded commands (before sending to AI)
+        const lowerText = cleanText.toLowerCase();
+        
+        // Stop TTS/music commands
+        if (lowerText === 'stop' || lowerText === 'stop talking' || lowerText === 'quiet' || lowerText === 'shut up' || lowerText === 'be quiet') {
+            this.logger.info(`🛑 Hardcoded stop command: "${cleanText}"`);
+            // Stop any current TTS by stopping the player
+            const vc = this.voiceManager.get(guildId);
+            if (vc?.player) {
+                vc.player.stop();
+            }
+            // Also stop music queue if music manager available
+            if (this.musicManager) {
+                this.musicManager.clearQueue(guildId);
+            }
+            state.processing = false;
+            return;
+        }
+        
+        // Skip command
+        if (lowerText === 'skip' || lowerText === 'next' || lowerText === 'next song') {
+            this.logger.info(`⏭️ Hardcoded skip command: "${cleanText}"`);
+            const vc = this.voiceManager.get(guildId);
+            if (vc && this.musicManager) {
+                this.musicManager.playNext(guildId, vc);
+            }
+            state.processing = false;
+            return;
+        }
+        
         // Send to OpenClaw
         this.logger.info(`📤 Sending to AI: "${cleanText}"`);
         const response = await this.sendToOpenClaw(cleanText, guildId);
@@ -364,10 +394,16 @@ class TranscriptionManager {
         // Log the response
         this.logger.info(`🤖 AI response: "${response}"`);
         
-        // Speak response
-        if (response && !response.startsWith('Error:') && response.length < 500) {
+        // Skip TTS if music is currently playing
+        const vc = this.voiceManager.get(guildId);
+        const isMusicPlaying = vc?.player?.state?.status === 'playing';
+        
+        // Speak response only if no music playing
+        if (response && !response.startsWith('Error:') && response.length < 500 && !isMusicPlaying) {
             const { speak } = require('./tts');
             await speak(response, guildId, this.voiceManager, this.config, this.logger);
+        } else if (isMusicPlaying) {
+            this.logger.info(`🔇 Skipping TTS - music is playing`);
         }
         
         state.processing = false;
