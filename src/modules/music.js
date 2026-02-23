@@ -177,6 +177,18 @@ class MusicManager {
             const streamUrl = await this.getAudioStream(next.url);
             const resource = this.createAudioResource(streamUrl);
             
+            // Handle errors - try to restart with fresh stream
+            voiceState.player.on('error', async (err) => {
+                this.logger.error(`🎵 Queue player error: ${err.message}, trying to restart...`);
+                try {
+                    const freshStream = await this.getAudioStream(next.url);
+                    const freshResource = this.createAudioResource(freshStream);
+                    voiceState.player.play(freshResource);
+                } catch (e) {
+                    this.logger.error(`🎵 Queue restart failed: ${e.message}`);
+                }
+            });
+            
             voiceState.player.on(AudioPlayerStatus.Idle, () => this.playNext(guildId, voiceState, message));
             voiceState.player.play(resource);
             
@@ -215,6 +227,19 @@ class MusicManager {
         try {
             const streamUrl = await this.getAudioStream(playUrl);
             const resource = this.createAudioResource(streamUrl);
+            
+            // Handle errors - try to restart with fresh stream
+            voiceState.player.on('error', async (err) => {
+                this.logger.error(`🎵 Player error: ${err.message}, trying to restart...`);
+                // Try to get fresh stream and replay
+                try {
+                    const freshStream = await this.getAudioStream(playUrl);
+                    const freshResource = this.createAudioResource(freshStream);
+                    voiceState.player.play(freshResource);
+                } catch (e) {
+                    this.logger.error(`🎵 Restart failed: ${e.message}`);
+                }
+            });
             
             voiceState.player.on(AudioPlayerStatus.Idle, () => this.playNext(guildId, voiceState, message));
             voiceState.player.play(resource);
