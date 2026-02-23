@@ -120,26 +120,14 @@ class TranscriptionManager {
             }
         }
         
-        // Try whisper.cpp CLI directly (fastest - no HTTP overhead)
+        // Use FasterWhisper HTTP server directly (faster than spawning CLI each time)
         try {
-            this.logger.debug(`📝 Trying whisper.cpp`);
-            const result = await this.transcribeWithWhisperCpp(audioPath);
-            if (result) {
-                this.transcriptionCache.set(audioPath, { text: result, timestamp: Date.now() });
-                return result;
-            }
-        } catch(e) {
-            this.logger.info(`Whisper.cpp CLI error: ${e.message}`);
-        }
-        
-        // Fallback to HTTP server
-        try {
-            this.logger.debug(`📝 Trying FasterWhisper HTTP`);
+            this.logger.debug(`📝 Using FasterWhisper HTTP`);
             const response = await fetch(this.config.WHISPER_SERVER + '/transcribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ path: audioPath }),
-                signal: AbortSignal.timeout(10000)
+                signal: AbortSignal.timeout(30000)
             });
             
             if (response.ok) {
@@ -148,7 +136,19 @@ class TranscriptionManager {
                 return result.text;
             }
         } catch(e) {
-            this.logger.debug(`FasterWhisper fallback error: ${e.message}`);
+            this.logger.debug(`FasterWhisper error: ${e.message}`);
+        }
+        
+        // Last resort: try whisper.cpp CLI
+        try {
+            this.logger.debug(`📝 Trying whisper.cpp as fallback`);
+            const result = await this.transcribeWithWhisperCpp(audioPath);
+            if (result) {
+                this.transcriptionCache.set(audioPath, { text: result, timestamp: Date.now() });
+                return result;
+            }
+        } catch(e) {
+            this.logger.debug(`Whisper.cpp CLI error: ${e.message}`);
         }
         
         return '';
@@ -250,15 +250,13 @@ class TranscriptionManager {
         
         this.logger.debug(`📝 PCM file: ${pcmFile}, size: ${audioBuffer.length}`);
         
-        // Convert to WAV for whisper with voice enhancement
+        // Convert to WAV for whisper (simple resample)
         await new Promise((resolve) => {
             const ff = spawn('ffmpeg', [
                 '-f', 's16le', '-ar', '48000', '-ac', '2',
                 '-i', pcmFile,
                 '-ar', '16000',
                 '-ac', '1',
-                // More aggressive voice band filter + noise gate + boost
-                '-af', 'highpass=f=80,lowpass=f=7500,volume=4,compand=attacks=0:points=-80/-80|-6/-6|0/-3|6/0',
                 '-y', wavFile
             ]);
             
