@@ -122,8 +122,31 @@ class TranscriptionManager {
         
         // Use FasterWhisper HTTP server directly (faster than spawning CLI each time)
         try {
-            this.logger.debug(`📝 Using FasterWhisper HTTP`);
-            const response = await fetch(this.config.WHISPER_SERVER + '/transcribe', {
+            const serverUrl = this.config.WHISPER_SERVER;
+            
+            // Try Rust whisper-server's /inference endpoint first (faster)
+            if (serverUrl.includes('5001')) {
+                this.logger.debug(`📝 Using Rust whisper.cpp`);
+                const formData = new FormData();
+                const audioBlob = new Blob([fs.readFileSync(audioPath)]);
+                formData.append('file', audioBlob, 'audio.wav');
+                formData.append('response_format', 'text');
+                
+                const response = await fetch(serverUrl + '/inference', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const text = await response.text();
+                    this.transcriptionCache.set(audioPath, { text: text.trim(), timestamp: Date.now() });
+                    return text.trim();
+                }
+            }
+            
+            // Fall back to FasterWhisper JSON API
+            this.logger.debug(`📝 Using FasterWhisper JSON API`);
+            const response = await fetch(serverUrl + '/transcribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ path: audioPath }),
@@ -136,7 +159,7 @@ class TranscriptionManager {
                 return result.text;
             }
         } catch(e) {
-            this.logger.debug(`FasterWhisper error: ${e.message}`);
+            this.logger.debug(`Whisper error: ${e.message}`);
         }
         
         // Last resort: try whisper.cpp CLI
