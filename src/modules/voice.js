@@ -1,5 +1,5 @@
 /**
- * Voice Manager - Handles Discord voice connections
+ * Voice Manager - Handles Discord voice connections with user-specific streams and VAD
  */
 const {
     joinVoiceChannel,
@@ -9,23 +9,23 @@ const {
     entersState
 } = require('@discordjs/voice');
 
-// Import Opus for decoding - use opusscript which is available
-const Opus = require('opusscript');
+// VAD for voice activity detection
+const VAD = require('webrtcvad');
 
 class VoiceManager {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
         this.connections = new Map(); // guildId -> VoiceState
+        this.vadMode = parseInt(process.env.VAD_MODE) || 3; // 0-3, 3 is most aggressive
+        this vad = new VAD(this.vadMode);
     }
     
     async join(guildId, channel, adapterCreator, onAudioReceived, textChannelId = null) {
         if (this.connections.has(guildId)) {
             const existing = this.connections.get(guildId);
-            // Update text channel if provided
             if (textChannelId && !existing.textChannelId) {
                 existing.textChannelId = textChannelId;
-                this.connections.set(guildId, existing);
             }
             return existing;
         }
@@ -38,10 +38,8 @@ class VoiceManager {
             selfMute: false
         });
         
-        // Wait for connection to be ready before setting up receiver
         try {
             await entersState(connection, VoiceConnectionStatus.Ready, 10000);
-            this.logger.debug('Voice connection ready');
         } catch (e) {
             this.logger.error('Voice connection not ready:', e.message);
         }
@@ -49,80 +47,120 @@ class VoiceManager {
         const player = createAudioPlayer();
         connection.subscribe(player);
         
-        // Use the built-in receiver from the connection
         const receiver = connection.receiver;
-        
         this.logger.info('🎧 Voice receiver ready');
         
-        // Use the working approach - decode Opus with @discordjs/opus
-        const userAudioStreams = new Map();
+        // User-specific audio tracking
+        const userStreams = new Map(); // userId -> { chunks, decoder, lastSpeech, isSpeaking }
         
-        // Create Opus decoder
-        const decoder = new Opus(48000, 2);
+        // Create Opus decoder for a specific user
+        const createUserDecoder = (userId) => {
+            return {
+                decoder: new (require('opusscript'))(48000, 2),
+                chunks: [],
+                lastSpeech: Date.now(),
+                isSpeaking: false,
+                speechChunks: [],  // Only speech chunks (VAD detected)
+                silenceCount: 0
+            };
+        };
         
-        // Subscribe to audio for a user and decode Opus -> PCM
-        const createStreamForUser = (userId) => {
-            if (userAudioStreams.has(userId)) return;
+        // Handle speaking events - track per user
+        receiver.speaking.on('start', (userId) => {
+            if (userId === connection.client?.user?.id) return;
             
-            // Subscribe in Opus mode
-            const stream = receiver.subscribe(userId, {
-                mode: { type: 'opus' }
-            });
+            if (!userStreams.has(userId)) {
+                userStreams.set(userId, createUserDecoder(userId));
+            }
             
-            userAudioStreams.set(userId, stream);
+            const userState = userStreams.get(userId);
+            userState.isSpeaking = true;
+            userState.lastSpeech = Date.now();
+            
+            this.logger.info(`🔊 User ${userId} started speaking`);
+        });
+        
+        receiver.speaking.on('end', (userId) => {
+            if (userId === connection.client?.user?.id) return;
+            
+            const userState = userStreams.get(userId);
+            if (userState) {
+                userState.isSpeaking = false;
+                this.logger.info(`🔇 User ${userId} stopped, chunks: ${userState.speechChunks.length}`);
+                
+                // Process accumulated speech
+                if (userState.speechChunks.length > 0 && onAudioReceived) {
+                    const combined = Buffer.concat(userState.speechChunks);
+                    this.logger.info(`📤 Sending ${combined.length} bytes for user ${userId}`);
+                    onAudioReceived(guildId, combined, userId, true); // isFinal = true
+                }
+                
+                // Reset speech chunks but keep user state
+                userState.speechChunks = [];
+                userState.silenceCount = 0;
+            }
+        });
+        
+        // Subscribe to audio and apply VAD per user
+        const setupUserAudio = (userId) => {
+            if (userStreams.has(userId)) return;
+            
+            const userState = createUserDecoder(userId);
+            userStreams.set(userId, userState);
+            
+            const stream = receiver.subscribe(userId, { mode: { type: 'opus' } });
             
             stream.on('data', (opusPacket) => {
-                // Decode Opus to PCM
-                let pcmBuffer;
                 try {
-                    pcmBuffer = decoder.decode(opusPacket);
-                    if (pcmBuffer) {
-                        state.audioChunks.push(pcmBuffer);
+                    const pcmBuffer = userState.decoder.decode(opusPacket);
+                    if (!pcmBuffer || pcmBuffer.length < 320) return;
+                    
+                    userState.chunks.push(pcmBuffer);
+                    
+                    // Apply VAD - check if this chunk contains speech
+                    // VAD expects 16-bit PCM, 16kHz mono
+                    const vadChunk = this.convertForVAD(pcmBuffer);
+                    const isSpeech = this.vad.isSpeech(vadChunk, 16);
+                    
+                    if (isSpeech) {
+                        userState.speechChunks.push(pcmBuffer);
+                        userState.lastSpeech = Date.now();
+                        userState.silenceCount = 0;
                         
-                        if (state.isRecording && state.recordingChunks) {
-                            state.recordingChunks.push(pcmBuffer);
+                        // Send interim result while speaking
+                        if (userState.speechChunks.length >= 2 && onAudioReceived) {
+                            const interim = Buffer.concat(userState.speechChunks);
+                            onAudioReceived(guildId, interim, userId, false); // isFinal = false
+                        }
+                    } else {
+                        userState.silenceCount++;
+                        
+                        // After X consecutive silent chunks, consider speech ended
+                        if (userState.silenceCount > 10 && userState.speechChunks.length > 0 && onAudioReceived) {
+                            const final = Buffer.concat(userState.speechChunks);
+                            this.logger.info(`📤 Sending final (VAD silence) ${final.length} bytes for user ${userId}`);
+                            onAudioReceived(guildId, final, userId, true);
+                            userState.speechChunks = [];
+                            userState.silenceCount = 0;
                         }
                     }
-                } catch(e) {
-                    this.logger.error(`Decode error: ${e.message}`);
+                } catch (e) {
+                    this.logger.error(`Decode error for ${userId}: ${e.message}`);
                 }
-            });
-            
-            stream.on('end', () => {
-                userAudioStreams.delete(userId);
             });
             
             stream.on('error', (err) => {
                 this.logger.error(`Audio stream error for ${userId}: ${err.message}`);
-                userAudioStreams.delete(userId);
+                userStreams.delete(userId);
+            });
+            
+            stream.on('end', () => {
+                userStreams.delete(userId);
             });
         };
         
-        // When anyone starts speaking, subscribe to their stream
-        receiver.speaking.on('start', (userId) => {
-            if (userId === connection.client?.user?.id) return;
-            this.logger.info(`🔊 Speaking start: user ${userId}`);
-            createStreamForUser(userId);
-        });
-        
-        // Process audio when speaking ends
-        receiver.speaking.on('end', (userId) => {
-            if (userId === connection.client?.user?.id) return;
-            this.logger.info(`🔇 Speaking end: user ${userId}, chunks: ${state.audioChunks.length}`);
-            
-            setTimeout(async () => {
-                if (state.audioChunks.length > 0) {
-                    const combined = Buffer.concat(state.audioChunks);
-                    state.audioChunks = [];
-                    
-                    this.logger.info(`📥 Processing ${combined.length} bytes`);
-                    
-                    if (combined.length > 48000 && onAudioReceived) {
-                        await onAudioReceived(guildId, combined, userId);
-                    }
-                }
-            }, 3000);
-        });
+        // Hook into speaking events to set up audio
+        receiver.speaking.on('start', setupUserAudio);
         
         const state = {
             connection,
@@ -133,15 +171,10 @@ class VoiceManager {
             isListening: true,
             isRecording: false,
             recordingChunks: [],
-            audioChunks: []
+            userStreams  // Track per-user streams
         };
         
         this.connections.set(guildId, state);
-        
-        // Check connection events
-        connection.on('debug', (msg) => {
-            this.logger.debug(`Connection debug: ${msg}`);
-        });
         
         connection.on(VoiceConnectionStatus.Destroyed, () => {
             this.cleanup(guildId);
@@ -149,6 +182,53 @@ class VoiceManager {
         
         this.logger.info(`🎤 Joined voice in ${guildId}`);
         return state;
+    }
+    
+    // Convert 48kHz stereo to 16kHz mono for VAD
+    convertForVAD(pcmBuffer) {
+        const fs = require('fs');
+        const { spawn } = require('child_process');
+        const tempFile = `/tmp/vad-${Date.now()}.pcm`;
+        
+        // Quick downsample using ffmpeg
+        return new Promise((resolve) => {
+            const ff = spawn('ffmpeg', [
+                '-f', 's16le', '-ar', '48000', '-ac', '2',
+                '-i', 'pipe:0',
+                '-ar', '16000', '-ac', '1',
+                '-f', 's16le',
+                '-y', tempFile
+            ], { stdio: ['pipe', 'pipe', 'ignore'] });
+            
+            ff.stdin.write(pcmBuffer);
+            ff.stdin.end();
+            
+            ff.on('close', () => {
+                try {
+                    const result = fs.readFileSync(tempFile);
+                    fs.unlinkSync(tempFile);
+                    resolve(result);
+                } catch(e) {
+                    resolve(Buffer.alloc(0));
+                }
+            });
+        });
+    }
+    
+    // Sync version for use in stream callbacks
+    convertForVDASync(pcmBuffer) {
+        // Simple downsampling: take every 3rd sample, convert stereo to mono
+        // This is approximate but fast (no subprocess)
+        const samples = new Int16Array(pcmBuffer.buffer, pcmBuffer.byteOffset, pcmBuffer.length / 2);
+        const mono16k = new Int16Array(Math.floor(samples.length / 3));
+        
+        for (let i = 0; i < mono16k.length; i++) {
+            // Average left/right channels and downsample
+            const idx = i * 3;
+            mono16k[i] = Math.floor((samples[idx] + samples[idx + 1]) / 2);
+        }
+        
+        return Buffer.from(mono16k.buffer);
     }
     
     get(guildId) {
@@ -164,6 +244,13 @@ class VoiceManager {
     }
     
     cleanup(guildId) {
+        const state = this.connections.get(guildId);
+        if (state?.userStreams) {
+            for (const [userId, userState] of state.userStreams) {
+                userState.chunks = [];
+                userState.speechChunks = [];
+            }
+        }
         this.connections.delete(guildId);
     }
     
@@ -174,58 +261,10 @@ class VoiceManager {
         }
     }
     
-    setRecording(guildId, start) {
-        const fs = require('fs');
-        const path = require('path');
-        const { spawn } = require('child_process');
-        
-        const recordingDir = '/tmp/openclaw-recordings';
-        if (!fs.existsSync(recordingDir)) {
-            fs.mkdirSync(recordingDir, { recursive: true });
-        }
-        
+    // Get specific user's stream state
+    getUserStream(guildId, userId) {
         const state = this.connections.get(guildId);
-        if (!state) return null;
-        
-        if (start) {
-            state.isRecording = true;
-            state.recordingChunks = [];
-            state.recordingStartTime = Date.now();
-            state.audioChunks = [];
-            this.logger.info(`🔴 Recording started in ${guildId}`);
-            return true;
-        } else {
-            // Use recording chunks (which now have decoded PCM)
-            const chunksToSave = state.recordingChunks.length > 0 ? state.recordingChunks : state.audioChunks;
-            
-            if (chunksToSave && chunksToSave.length > 0) {
-                const combined = Buffer.concat(chunksToSave);
-                const filePath = path.join(recordingDir, `recording-${guildId}-${state.recordingStartTime}.wav`);
-                
-                this.logger.info(`💾 Saving recording: ${combined.length} bytes (PCM)`);
-                
-                // Save as raw PCM first
-                const rawPath = filePath.replace('.wav', '.pcm');
-                fs.writeFileSync(rawPath, combined);
-                
-                // Convert to WAV
-                spawn('ffmpeg', [
-                    '-f', 's16le', '-ar', '48000', '-ac', '2',
-                    '-i', rawPath,
-                    '-ar', '16000', '-ac', '1',
-                    '-y', filePath
-                ], { stdio: ['ignore', 'pipe', 'pipe'] }).on('close', () => {
-                    this.logger.info(`💾 Recording saved to ${filePath}`);
-                    try { fs.unlinkSync(rawPath); } catch(e) {}
-                });
-                
-                state.isRecording = false;
-                state.recordingChunks = [];
-                return filePath;
-            }
-            state.isRecording = false;
-            return null;
-        }
+        return state?.userStreams?.get(userId);
     }
 }
 
